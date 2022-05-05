@@ -1,7 +1,8 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, Shutdown};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, Shutdown, TcpListener};
 use std::time::Duration;
 use std::thread::{self, JoinHandle};
-use std::sync::{Mutex, Arc};
+use std::sync::{Mutex, Arc, mpsc::Sender};
+use std::io::Read;
 
 use crate::event::{Event, EventChannel};
 use crate::tools;
@@ -18,6 +19,34 @@ impl Node {
 
   pub fn start(mut self) -> JoinHandle<()> {
     thread::spawn(move || self.scan(32000, 100))
+  }
+
+  fn listener(&mut self, port: u16, tx: Sender<Event>) {
+    let listener = TcpListener::bind((tools::local_ip(), port)).unwrap();
+
+    for stream in listener.incoming() {
+      match stream {
+        Ok(mut stream) => {
+          let mut buf = [0u8; 1024];
+          let size = stream.read(&mut buf).unwrap();
+
+          if size == 0 {
+            continue
+          }
+
+          let data = String::from_utf8(buf[..size].to_vec()).unwrap();
+          let (cmd, args) = data.split_once(' ').unwrap();
+
+          let event = Event::new(
+            "network".to_string(),
+            cmd.to_string(),
+            vec![args.to_string()]);
+
+          tx.send(event).unwrap();
+        },
+        Err(_) => {}
+      }
+    }
   }
 
   fn scan(&mut self, port: u16, connection_timeout_millis: u64) {
