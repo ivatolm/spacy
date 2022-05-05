@@ -16,6 +16,14 @@ impl Event {
   pub fn new(sender: String, title: String, data: Vec<String>) -> Self {
     Self { sender, title, data }
   }
+
+  pub fn sender(&self) -> &str {
+    &self.sender
+  }
+
+  pub fn title(&self) -> &str {
+    &self.title
+  }
 }
 
 impl EventChannel {

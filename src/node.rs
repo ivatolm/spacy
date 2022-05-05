@@ -24,7 +24,21 @@ impl Node {
     let lbtx = self.ec.lbtx.clone();
     let listener_handle = thread::spawn(move || Self::listener(32000, lbtx));
 
-    vec![scan_handle, listener_handle]
+    let event_handler_handle = thread::spawn(move || self.event_handler());
+
+    vec![scan_handle, listener_handle, event_handler_handle]
+  }
+
+  fn event_handler(self) {
+    loop {
+      let event = self.ec.rx.recv().unwrap();
+
+      match event.sender() {
+        "network" => println!("EventHandler received event from 'network'"),
+        "main" => println!("EventHandler received event from 'main'"),
+        _ => unreachable!()
+      }
+    }
   }
 
   fn listener(port: u16, tx: Sender<Event>) {
