@@ -11,7 +11,9 @@ fn main() {
   let ec = EventChannel::new(tx, rx);
 
   let node = Node::new(ec);
-  let node_thread = node.start();
+  let node_join_handlers = node.start();
 
-  node_thread.join().unwrap();
+  for handler in node_join_handlers {
+    handler.join().unwrap();
+  }
 }
