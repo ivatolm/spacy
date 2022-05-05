@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, Shutdown, TcpListener};
 use std::time::Duration;
 use std::thread::{self, JoinHandle};
 use std::sync::{Mutex, Arc, mpsc::Sender};
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::event::{Event, EventChannel};
 use crate::tools;
@@ -24,12 +24,12 @@ impl Node {
     let lbtx = self.ec.lbtx.clone();
     let listener_handle = thread::spawn(move || Self::listener(32000, lbtx));
 
-    let event_handler_handle = thread::spawn(move || self.event_handler());
+    let event_handler_handle = thread::spawn(move || self.event_handler(32000));
 
     vec![scan_handle, listener_handle, event_handler_handle]
   }
 
-  fn event_handler(self) {
+  fn event_handler(self, port: u16) {
     loop {
       let event = self.ec.rx.recv().unwrap();
 
@@ -38,14 +38,36 @@ impl Node {
           println!("EventHandler received event from 'network'");
 
           let event = Event::new(
-            "network".to_string(),
-            "new_plugin".to_string(),
+            "node".to_string(),
+            event.title,
             event.data
           );
 
           self.ec.tx.send(event).unwrap();
         },
-        "main" => println!("EventHandler received event from 'main'"),
+        "main" => {
+          println!("EventHandler received event from 'main'");
+
+          match event.title() {
+            "broadcast" => {
+              println!("Broadcasting a message...");
+
+              let nodes = self.nodes.lock().unwrap();
+              for node in nodes.iter() {
+                match TcpStream::connect((*node, port)) {
+                  Ok(mut stream) => {
+                    let data = "new_message ".to_string() + event.data.get(0).unwrap();
+                    let bytes = data.as_bytes();
+                    stream.write(bytes).unwrap();
+                    stream.shutdown(Shutdown::Both).unwrap();
+                  },
+                  Err(_) => {}
+                }
+              }
+            },
+            _ => unreachable!()
+          }
+        },
         _ => unreachable!()
       }
     }
@@ -61,7 +83,7 @@ impl Node {
           let size = stream.read(&mut buf).unwrap();
 
           if size == 0 {
-            continue
+            continue;
           }
 
           let data = String::from_utf8(buf[..size].to_vec()).unwrap();
@@ -70,7 +92,8 @@ impl Node {
           let event = Event::new(
             "network".to_string(),
             cmd.to_string(),
-            vec![args.to_string()]);
+            vec![args.to_string()]
+          );
 
           tx.send(event).unwrap();
         },
@@ -98,7 +121,7 @@ impl Node {
           match stream {
             Ok(stream) => {
               upd_nodes.push(ip);
-              stream.shutdown(Shutdown::Both).unwrap()
+              stream.shutdown(Shutdown::Both).unwrap();
             },
             Err(_) => {}
           }

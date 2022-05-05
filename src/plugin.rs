@@ -40,7 +40,17 @@ impl Plugin {
       let event = self.ec.rx.recv().unwrap();
 
       match event.sender() {
-        "plugin" => println!("EventHandler received event from 'plugin'"),
+        "plugin" => {
+          println!("EventHandler received event from 'plugin'");
+
+          let event = Event::new(
+            "plugin".to_string(),
+            event.title,
+            event.data
+          );
+
+          self.ec.tx.send(event).unwrap();
+        },
         "main" => println!("EventHandler received event from 'main'"),
         _ => unreachable!()
       }
