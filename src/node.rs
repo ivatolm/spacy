@@ -21,8 +21,8 @@ impl Node {
     let nodes = self.nodes.clone();
     let scan_handle = thread::spawn(move || Self::scan(32000, 100, nodes));
 
-    let tx = self.ec.tx.clone();
-    let listener_handle = thread::spawn(move || Self::listener(32000, tx));
+    let lbtx = self.ec.lbtx.clone();
+    let listener_handle = thread::spawn(move || Self::listener(32000, lbtx));
 
     vec![scan_handle, listener_handle]
   }

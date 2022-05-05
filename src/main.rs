@@ -7,8 +7,10 @@ use event::EventChannel;
 use node::Node;
 
 fn main() {
-  let (tx, rx) = mpsc::channel();
-  let ec = EventChannel::new(tx, rx);
+  let (tx1, rx1) = mpsc::channel();
+  let (tx2, rx2) = mpsc::channel();
+
+  let ec = EventChannel::new(tx2, rx1, tx1);
 
   let node = Node::new(ec);
   let node_join_handlers = node.start();

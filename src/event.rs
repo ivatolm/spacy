@@ -8,7 +8,8 @@ pub struct Event {
 
 pub struct EventChannel {
   pub tx: Sender<Event>,
-  pub rx: Receiver<Event>
+  pub rx: Receiver<Event>,
+  pub lbtx: Sender<Event>
 }
 
 impl Event {
@@ -18,7 +19,7 @@ impl Event {
 }
 
 impl EventChannel {
-  pub fn new(tx: Sender<Event>, rx: Receiver<Event>) -> Self {
-    Self { tx, rx }
+  pub fn new(tx: Sender<Event>, rx: Receiver<Event>, lbtx: Sender<Event>) -> Self {
+    Self { tx, rx, lbtx }
   }
 }
