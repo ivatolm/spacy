@@ -34,7 +34,17 @@ impl Node {
       let event = self.ec.rx.recv().unwrap();
 
       match event.sender() {
-        "network" => println!("EventHandler received event from 'network'"),
+        "network" => {
+          println!("EventHandler received event from 'network'");
+
+          let event = Event::new(
+            "network".to_string(),
+            "new_plugin".to_string(),
+            event.data
+          );
+
+          self.ec.tx.send(event).unwrap();
+        },
         "main" => println!("EventHandler received event from 'main'"),
         _ => unreachable!()
       }
