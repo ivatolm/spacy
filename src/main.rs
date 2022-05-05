@@ -1,6 +1,7 @@
 mod tools;
 mod event;
 mod node;
+mod plugin;
 
 use std::sync::mpsc;
 use event::EventChannel;
