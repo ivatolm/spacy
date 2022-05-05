@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, Shutdown, TcpListener};
 use std::time::Duration;
 use std::thread::{self, JoinHandle};
-use std::sync::{Mutex, Arc, mpsc};
+use std::sync::{Mutex, Arc, mpsc::Sender};
 use std::io::Read;
 
 use crate::event::{Event, EventChannel};
@@ -21,14 +21,13 @@ impl Node {
     let nodes = self.nodes.clone();
     let scan_handle = thread::spawn(move || Self::scan(32000, 100, nodes));
 
-    let (tx, rx) = mpsc::channel();
-    let listener_ec = EventChannel::new(tx, rx);
-    let listener_handle = thread::spawn(move || Self::listener(32000, listener_ec));
+    let tx = self.ec.tx.clone();
+    let listener_handle = thread::spawn(move || Self::listener(32000, tx));
 
     vec![scan_handle, listener_handle]
   }
 
-  fn listener(port: u16, ec: EventChannel) {
+  fn listener(port: u16, tx: Sender<Event>) {
     let listener = TcpListener::bind((tools::local_ip(), port)).unwrap();
 
     for stream in listener.incoming() {
@@ -49,7 +48,7 @@ impl Node {
             cmd.to_string(),
             vec![args.to_string()]);
 
-          ec.tx.send(event).unwrap();
+          tx.send(event).unwrap();
         },
         Err(_) => {}
       }
