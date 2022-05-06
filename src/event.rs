@@ -1,11 +1,22 @@
 use std::sync::mpsc::{Sender, Receiver};
 
-use crate::protocol::{EventSender, EventKind};
-
 pub struct Event {
   pub sender: EventSender,
   pub kind: EventKind,
   pub data: Vec<String>
+}
+
+pub enum EventSender {
+  Lb,
+  Main,
+  Node,
+  Plugin
+}
+
+pub enum EventKind {
+  NewPlugin,
+  NewMessage,
+  Broadcast
 }
 
 pub struct EventChannel {

@@ -4,8 +4,7 @@ use std::thread::{self, JoinHandle};
 use std::sync::{Mutex, Arc, mpsc::Sender};
 use std::io::{Read, Write};
 
-use crate::event::{Event, EventChannel};
-use crate::protocol::{EventSender, EventKind};
+use crate::event::{Event, EventSender, EventKind, EventChannel};
 use crate::tools;
 
 pub struct Node {

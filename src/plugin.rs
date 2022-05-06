@@ -5,8 +5,7 @@ use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::event::{EventChannel, Event};
-use crate::protocol::{EventSender, EventKind};
+use crate::event::{Event, EventSender, EventKind, EventChannel};
 use crate::tools;
 
 pub struct Plugin {
