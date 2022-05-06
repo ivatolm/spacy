@@ -5,6 +5,7 @@ use std::sync::{Mutex, Arc, mpsc::Sender};
 use std::io::{Read, Write};
 
 use crate::event::{Event, EventChannel};
+use crate::protocol::{EventSender, EventKind};
 use crate::tools;
 
 pub struct Node {
@@ -33,23 +34,23 @@ impl Node {
     loop {
       let event = self.ec.rx.recv().unwrap();
 
-      match event.sender() {
-        "network" => {
+      match event.sender {
+        EventSender::Lb => {
           println!("EventHandler received event from 'network'");
 
           let event = Event::new(
-            "node".to_string(),
-            event.title,
+            EventSender::Node,
+            event.kind,
             event.data
           );
 
           self.ec.tx.send(event).unwrap();
         },
-        "main" => {
+        EventSender::Main => {
           println!("EventHandler received event from 'main'");
 
-          match event.title() {
-            "broadcast" => {
+          match event.kind {
+            EventKind::Broadcast => {
               println!("Broadcasting a message...");
 
               let nodes = self.nodes.lock().unwrap();
@@ -89,9 +90,15 @@ impl Node {
           let data = String::from_utf8(buf[..size].to_vec()).unwrap();
           let (cmd, args) = data.split_once(' ').unwrap();
 
+          let event_kind = match cmd {
+            "new_plugin" => EventKind::NewPlugin,
+            "new_message" => EventKind::NewMessage,
+            _ => panic!()
+          };
+
           let event = Event::new(
-            "network".to_string(),
-            cmd.to_string(),
+            EventSender::Lb,
+            event_kind,
             vec![args.to_string()]
           );
 

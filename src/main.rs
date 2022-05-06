@@ -1,10 +1,12 @@
 mod tools;
+mod protocol;
 mod event;
 mod node;
 mod plugin;
 
 use std::sync::mpsc;
 use event::{Event, EventChannel};
+use protocol::{EventSender, EventKind};
 use node::Node;
 use plugin::Plugin;
 
@@ -22,9 +24,9 @@ fn main() {
   loop {
     let event = main_rx.recv().unwrap();
 
-    match event.sender() {
-      "node" => match event.title() {
-        "new_plugin" => {
+    match event.sender {
+      EventSender::Node => match event.kind {
+        EventKind::NewPlugin => {
           if event.data.len() == 0 {
             break;
           }
@@ -38,7 +40,7 @@ fn main() {
           let join_handler = plugin.start();
           plugins_join_handlers.push(join_handler);
         },
-        "new_message" => {
+        EventKind::NewMessage => {
           if event.data.len() == 0 {
             break;
           }
@@ -47,15 +49,15 @@ fn main() {
         }
         _ => panic!()
       },
-      "plugin" => match event.title() {
-        "broadcast" => {
+      EventSender::Plugin => match event.kind {
+        EventKind::Broadcast => {
           if event.data.len() == 0 {
             break;
           }
 
           let event = Event::new(
-            "main".to_string(),
-            event.title,
+            EventSender::Main,
+            event.kind,
             event.data
           );
 

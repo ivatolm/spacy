@@ -1,8 +1,10 @@
 use std::sync::mpsc::{Sender, Receiver};
 
+use crate::protocol::{EventSender, EventKind};
+
 pub struct Event {
-  pub sender: String,
-  pub title: String,
+  pub sender: EventSender,
+  pub kind: EventKind,
   pub data: Vec<String>
 }
 
@@ -13,16 +15,8 @@ pub struct EventChannel {
 }
 
 impl Event {
-  pub fn new(sender: String, title: String, data: Vec<String>) -> Self {
-    Self { sender, title, data }
-  }
-
-  pub fn sender(&self) -> &str {
-    &self.sender
-  }
-
-  pub fn title(&self) -> &str {
-    &self.title
+  pub fn new(sender: EventSender, kind: EventKind, data: Vec<String>) -> Self {
+    Self { sender, kind, data }
   }
 }
 
