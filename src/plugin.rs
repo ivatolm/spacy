@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::event::{Event, EventSender, EventKind, EventChannel};
+use crate::event::{Event, EventSender, EventChannel};
 use crate::tools;
 
 pub struct Plugin {
@@ -69,10 +69,7 @@ impl Plugin {
       let data = String::from_utf8(buf[..size].to_vec()).unwrap();
       let (cmd, args) = data.split_once(' ').unwrap();
 
-      let event_kind = match cmd {
-        "broadcast" => EventKind::Broadcast,
-        _ => panic!()
-      };
+      let event_kind = tools::event_kind_from_string(cmd).unwrap();
 
       let event = Event::new(
         EventSender::Plugin,

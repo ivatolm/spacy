@@ -89,11 +89,7 @@ impl Node {
           let data = String::from_utf8(buf[..size].to_vec()).unwrap();
           let (cmd, args) = data.split_once(' ').unwrap();
 
-          let event_kind = match cmd {
-            "new_plugin" => EventKind::NewPlugin,
-            "new_message" => EventKind::NewMessage,
-            _ => panic!()
-          };
+          let event_kind = tools::event_kind_from_string(cmd).unwrap();
 
           let event = Event::new(
             EventSender::Lb,
