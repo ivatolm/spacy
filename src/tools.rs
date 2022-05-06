@@ -28,6 +28,7 @@ pub fn event_kind_from_string(x: &str) -> Result<EventKind, String> {
   match x {
     "new_plugin" => Ok(EventKind::NewPlugin),
     "new_message" => Ok(EventKind::NewMessage),
+    "get_nodes" => Ok(EventKind::GetNodes),
     "broadcast" => Ok(EventKind::Broadcast),
     _ => Err("Match not found".to_string())
   }

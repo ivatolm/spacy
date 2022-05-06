@@ -16,6 +16,7 @@ pub enum EventSender {
 pub enum EventKind {
   NewPlugin,
   NewMessage,
+  GetNodes,
   Broadcast
 }
 

@@ -35,8 +35,6 @@ impl Node {
 
       match event.sender {
         EventSender::Lb => {
-          println!("EventHandler received event from 'network'");
-
           let event = Event::new(
             EventSender::Node,
             event.kind,
@@ -46,12 +44,24 @@ impl Node {
           self.ec.tx.send(event).unwrap();
         },
         EventSender::Main => {
-          println!("EventHandler received event from 'main'");
-
           match event.kind {
-            EventKind::Broadcast => {
-              println!("Broadcasting a message...");
+            EventKind::GetNodes => {
+              let mut result = Vec::new();
 
+              let nodes = self.nodes.lock().unwrap();
+              for node in nodes.iter() {
+                result.push((*node).to_string() + ";");
+              }
+
+              let event = Event::new(
+                EventSender::Node,
+                event.kind,
+                result
+              );
+
+              self.ec.tx.send(event).unwrap();
+            },
+            EventKind::Broadcast => {
               let nodes = self.nodes.lock().unwrap();
               for node in nodes.iter() {
                 match TcpStream::connect((*node, port)) {
@@ -79,7 +89,7 @@ impl Node {
     for stream in listener.incoming() {
       match stream {
         Ok(mut stream) => {
-          let mut buf = [0u8; 1024];
+          let mut buf = [0u8; 16384];
           let size = stream.read(&mut buf).unwrap();
 
           if size == 0 {

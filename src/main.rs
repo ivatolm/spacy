@@ -17,6 +17,7 @@ fn main() {
   let node = Node::new(node_ec);
   let node_join_handlers = node.start();
 
+  let mut plugins_txs = Vec::new();
   let mut plugins_join_handlers = Vec::new();
 
   loop {
@@ -36,23 +37,29 @@ fn main() {
 
           let plugin = Plugin::new(plugin_ec, source.to_string());
           let join_handler = plugin.start();
+
+          plugins_txs.push(plugin_tx);
           plugins_join_handlers.push(join_handler);
         },
         EventKind::NewMessage => {
           if event.data.len() == 0 {
             break;
           }
+        },
+        EventKind::GetNodes => {
+          let event = Event::new(
+            EventSender::Main,
+            event.kind,
+            event.data
+          );
 
-          println!("Received a message from the node: {}", event.data.get(0).unwrap());
-        }
+          let tx = plugins_txs.get(0).unwrap();
+          tx.send(event).unwrap();
+        },
         _ => panic!()
       },
       EventSender::Plugin => match event.kind {
-        EventKind::Broadcast => {
-          if event.data.len() == 0 {
-            break;
-          }
-
+        EventKind::GetNodes => {
           let event = Event::new(
             EventSender::Main,
             event.kind,
@@ -60,6 +67,28 @@ fn main() {
           );
 
           node_tx.send(event).unwrap();
+        },
+        EventKind::Broadcast => {
+          if event.data.len() == 0 {
+            break;
+          }
+
+          let event = Event::new(
+            EventSender::Main,
+            EventKind::Broadcast,
+            event.data
+          );
+
+          node_tx.send(event).unwrap();
+
+          let event = Event::new(
+            EventSender::Main,
+            EventKind::Broadcast,
+            Vec::new()
+          );
+
+          let tx = plugins_txs.get(0).unwrap();
+          tx.send(event).unwrap();
         },
         _ => panic!()
       }
