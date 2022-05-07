@@ -37,3 +37,28 @@ impl EventChannel {
     Self { tx, rx, lbtx }
   }
 }
+
+impl EventKind {
+  pub fn to_string(&self) -> String {
+    match self {
+      Self::NewPlugin => "new_plugin".to_string(),
+      Self::NewMessage => "new_message".to_string(),
+      Self::GetNodes => "get_nodes".to_string(),
+      Self::Broadcast => "broadcast".to_string()
+    }
+  }
+}
+
+impl TryFrom<&str> for EventKind {
+  type Error = ();
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    match value {
+      "new_plugin" => Ok(EventKind::NewPlugin),
+      "new_message" => Ok(EventKind::NewMessage),
+      "get_nodes" => Ok(EventKind::GetNodes),
+      "broadcast" => Ok(EventKind::Broadcast),
+      _ => Err(())
+    }
+  }
+}

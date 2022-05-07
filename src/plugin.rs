@@ -42,21 +42,11 @@ impl Plugin {
 
       match event.sender {
         EventSender::Plugin => {
-          let event = Event::new(
-            EventSender::Plugin,
-            event.kind,
-            event.data
-          );
-
+          let event = Event::new(EventSender::Plugin, event.kind, event.data);
           self.ec.tx.send(event).unwrap();
         },
         EventSender::Main => {
-          let event = Event::new(
-            EventSender::Lb,
-            event.kind,
-            event.data
-          );
-
+          let event = Event::new(EventSender::Lb, event.kind, event.data);
           server_tx.send(event).unwrap();
         },
         _ => unreachable!()
@@ -73,15 +63,11 @@ impl Plugin {
       let size = stream.read(&mut buf).unwrap();
 
       let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-      let (cmd, args) = data.split_once(' ').unwrap();
+      let (cmd, args) = data.split_once(";").unwrap();
 
-      let event_kind = tools::event_kind_from_string(cmd).unwrap();
+      let event_kind = cmd.try_into().unwrap();
 
-      let event = Event::new(
-        EventSender::Plugin,
-        event_kind,
-        vec![args.to_string()]);
-
+      let event = Event::new(EventSender::Plugin, event_kind, vec![args.to_string()]);
       ec.tx.send(event).unwrap();
 
       let event = ec.rx.recv().unwrap();
@@ -95,19 +81,19 @@ impl Plugin {
               }
             }
 
-            let data = "get_nodes ".to_string() + nodes.as_str();
+            let data = EventKind::GetNodes.to_string() + ";" + nodes.as_str();
             let bytes = data.as_bytes();
             stream.write(&bytes).unwrap();
           },
           EventKind::Broadcast => {
-            let data = "broadcast ".as_bytes();
-            stream.write(&data).unwrap();
+            let data = EventKind::Broadcast.to_string() + ";";
+            let bytes = data.as_bytes();
+            stream.write(&bytes).unwrap();
           }
           _ => {}
         },
         _ => {}
       }
-      // do what event says to do
 
       thread::sleep(Duration::from_secs(1));
     }

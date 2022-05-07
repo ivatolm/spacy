@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, Shutdown, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, TcpListener};
 use std::time::Duration;
 use std::thread::{self, JoinHandle};
 use std::sync::{Mutex, Arc, mpsc::Sender};
@@ -17,14 +17,14 @@ impl Node {
     Self { ec, nodes: Arc::new(Mutex::new(Vec::new())) }
   }
 
-  pub fn start(self) -> Vec<JoinHandle<()>> {
+  pub fn start(self, port: u16, ping_timeout_millis: u64) -> Vec<JoinHandle<()>> {
     let nodes = self.nodes.clone();
-    let scan_handle = thread::spawn(move || Self::scan(32000, 100, nodes));
+    let scan_handle = thread::spawn(move || Self::scan(port, ping_timeout_millis, nodes));
 
     let lbtx = self.ec.lbtx.clone();
-    let listener_handle = thread::spawn(move || Self::listener(32000, lbtx));
+    let listener_handle = thread::spawn(move || Self::listener(port, lbtx));
 
-    let event_handler_handle = thread::spawn(move || self.event_handler(32000));
+    let event_handler_handle = thread::spawn(move || self.event_handler(port));
 
     vec![scan_handle, listener_handle, event_handler_handle]
   }
@@ -35,48 +35,35 @@ impl Node {
 
       match event.sender {
         EventSender::Lb => {
-          let event = Event::new(
-            EventSender::Node,
-            event.kind,
-            event.data
-          );
-
+          let event = Event::new(EventSender::Node, event.kind, event.data);
           self.ec.tx.send(event).unwrap();
         },
-        EventSender::Main => {
-          match event.kind {
-            EventKind::GetNodes => {
-              let mut result = Vec::new();
+        EventSender::Main => match event.kind {
+          EventKind::GetNodes => {
+            let nodes = self.nodes.lock().unwrap();
+            let result = nodes.iter()
+              .map(|ip| ip.to_string() + ";")
+              .collect();
 
-              let nodes = self.nodes.lock().unwrap();
-              for node in nodes.iter() {
-                result.push((*node).to_string() + ";");
+            let event = Event::new(EventSender::Node, event.kind, result);
+            self.ec.tx.send(event).unwrap();
+          },
+          EventKind::Broadcast => {
+            let msg = event.data.get(0).unwrap();
+
+            let nodes = self.nodes.lock().unwrap();
+            for node in nodes.iter() {
+              match TcpStream::connect((*node, port)) {
+                Ok(mut stream) => {
+                  let data = EventKind::NewMessage.to_string() + ";" + msg;
+                  let bytes = data.as_bytes();
+                  stream.write(bytes).unwrap();
+                },
+                Err(_) => {}
               }
-
-              let event = Event::new(
-                EventSender::Node,
-                event.kind,
-                result
-              );
-
-              self.ec.tx.send(event).unwrap();
-            },
-            EventKind::Broadcast => {
-              let nodes = self.nodes.lock().unwrap();
-              for node in nodes.iter() {
-                match TcpStream::connect((*node, port)) {
-                  Ok(mut stream) => {
-                    let data = "new_message ".to_string() + event.data.get(0).unwrap();
-                    let bytes = data.as_bytes();
-                    stream.write(bytes).unwrap();
-                    stream.shutdown(Shutdown::Both).unwrap();
-                  },
-                  Err(_) => {}
-                }
-              }
-            },
-            _ => unreachable!()
-          }
+            }
+          },
+          _ => unreachable!()
         },
         _ => unreachable!()
       }
@@ -97,16 +84,11 @@ impl Node {
           }
 
           let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-          let (cmd, args) = data.split_once(' ').unwrap();
+          let (cmd, args) = data.split_once(";").unwrap();
 
-          let event_kind = tools::event_kind_from_string(cmd).unwrap();
+          let event_kind = cmd.try_into().unwrap();
 
-          let event = Event::new(
-            EventSender::Lb,
-            event_kind,
-            vec![args.to_string()]
-          );
-
+          let event = Event::new(EventSender::Lb, event_kind, vec![args.to_string()]);
           tx.send(event).unwrap();
         },
         Err(_) => {}
@@ -114,7 +96,7 @@ impl Node {
     }
   }
 
-  fn scan(port: u16, connection_timeout_millis: u64, nodes: Arc<Mutex<Vec<IpAddr>>>) {
+  fn scan(port: u16, ping_timeout_millis: u64, nodes: Arc<Mutex<Vec<IpAddr>>>) {
     let mut upd_nodes = Vec::new();
 
     loop {
@@ -128,12 +110,12 @@ impl Node {
 
           let stream = TcpStream::connect_timeout(
             &socket_address,
-            Duration::from_millis(connection_timeout_millis));
+            Duration::from_millis(ping_timeout_millis)
+          );
 
           match stream {
-            Ok(stream) => {
+            Ok(_) => {
               upd_nodes.push(ip);
-              stream.shutdown(Shutdown::Both).unwrap();
             },
             Err(_) => {}
           }

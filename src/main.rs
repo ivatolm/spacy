@@ -15,7 +15,7 @@ fn main() {
   let node_ec = EventChannel::new(main_tx.clone(), node_rx, node_tx.clone());
 
   let node = Node::new(node_ec);
-  let node_join_handlers = node.start();
+  let node_join_handlers = node.start(32000, 100);
 
   let mut plugins_txs = Vec::new();
   let mut plugins_join_handlers = Vec::new();
@@ -26,12 +26,7 @@ fn main() {
     match event.sender {
       EventSender::Node => match event.kind {
         EventKind::NewPlugin => {
-          if event.data.len() == 0 {
-            break;
-          }
-
           let (plugin_tx, plugin_rx) = mpsc::channel();
-
           let plugin_ec = EventChannel::new(main_tx.clone(), plugin_rx, plugin_tx.clone());
           let source = event.data.get(0).unwrap();
 
@@ -41,17 +36,9 @@ fn main() {
           plugins_txs.push(plugin_tx);
           plugins_join_handlers.push(join_handler);
         },
-        EventKind::NewMessage => {
-          if event.data.len() == 0 {
-            break;
-          }
-        },
+        EventKind::NewMessage => {},
         EventKind::GetNodes => {
-          let event = Event::new(
-            EventSender::Main,
-            event.kind,
-            event.data
-          );
+          let event = Event::new(EventSender::Main, event.kind, event.data);
 
           let tx = plugins_txs.get(0).unwrap();
           tx.send(event).unwrap();
@@ -60,39 +47,20 @@ fn main() {
       },
       EventSender::Plugin => match event.kind {
         EventKind::GetNodes => {
-          let event = Event::new(
-            EventSender::Main,
-            event.kind,
-            event.data
-          );
-
+          let event = Event::new(EventSender::Main, event.kind, event.data);
           node_tx.send(event).unwrap();
         },
         EventKind::Broadcast => {
-          if event.data.len() == 0 {
-            break;
-          }
-
-          let event = Event::new(
-            EventSender::Main,
-            EventKind::Broadcast,
-            event.data
-          );
-
+          let event = Event::new(EventSender::Main, EventKind::Broadcast, event.data);
           node_tx.send(event).unwrap();
 
-          let event = Event::new(
-            EventSender::Main,
-            EventKind::Broadcast,
-            Vec::new()
-          );
-
+          let event = Event::new(EventSender::Main, EventKind::Broadcast, Vec::new());
           let tx = plugins_txs.get(0).unwrap();
           tx.send(event).unwrap();
         },
         _ => panic!()
       }
-      _ => panic!()
+      _ => break
     }
   }
 
