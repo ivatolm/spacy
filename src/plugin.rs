@@ -89,7 +89,19 @@ impl Plugin {
             let data = EventKind::Broadcast.to_string() + ";";
             let bytes = data.as_bytes();
             stream.write(&bytes).unwrap();
-          }
+          },
+          EventKind::Other => {
+            let mut args = String::new();
+            if event.data.len() != 0 {
+              for arg in event.data.iter() {
+                args += arg;
+              }
+            }
+
+            let data = EventKind::Other.to_string() + ";" + args.as_str();
+            let bytes = data.as_bytes();
+            stream.write(&bytes).unwrap();
+          },
           _ => {}
         },
         _ => {}

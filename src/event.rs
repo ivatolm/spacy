@@ -13,11 +13,13 @@ pub enum EventSender {
   Plugin
 }
 
+#[derive(Clone, PartialEq)]
 pub enum EventKind {
   NewPlugin,
   NewMessage,
   GetNodes,
-  Broadcast
+  Broadcast,
+  Other
 }
 
 pub struct EventChannel {
@@ -44,7 +46,8 @@ impl EventKind {
       Self::NewPlugin => "new_plugin".to_string(),
       Self::NewMessage => "new_message".to_string(),
       Self::GetNodes => "get_nodes".to_string(),
-      Self::Broadcast => "broadcast".to_string()
+      Self::Broadcast => "broadcast".to_string(),
+      Self::Other => "other".to_string()
     }
   }
 }
@@ -58,6 +61,7 @@ impl TryFrom<&str> for EventKind {
       "new_message" => Ok(EventKind::NewMessage),
       "get_nodes" => Ok(EventKind::GetNodes),
       "broadcast" => Ok(EventKind::Broadcast),
+      "other" => Ok(EventKind::Other),
       _ => Err(())
     }
   }

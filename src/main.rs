@@ -43,6 +43,12 @@ fn main() {
           let tx = plugins_txs.get(0).unwrap();
           tx.send(event).unwrap();
         },
+        EventKind::Other => {
+          let event = Event::new(EventSender::Main, event.kind, event.data);
+
+          let tx = plugins_txs.get(0).unwrap();
+          tx.send(event).unwrap();
+        },
         _ => panic!()
       },
       EventSender::Plugin => match event.kind {
@@ -57,6 +63,10 @@ fn main() {
           let event = Event::new(EventSender::Main, EventKind::Broadcast, Vec::new());
           let tx = plugins_txs.get(0).unwrap();
           tx.send(event).unwrap();
+        },
+        EventKind::Other => {
+          let event = Event::new(EventSender::Main, event.kind, event.data);
+          node_tx.send(event).unwrap();
         },
         _ => panic!()
       }

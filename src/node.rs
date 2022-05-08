@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, TcpListener};
+use std::sync::mpsc;
 use std::time::Duration;
 use std::thread::{self, JoinHandle};
 use std::sync::{Mutex, Arc, mpsc::Sender};
@@ -22,14 +23,17 @@ impl Node {
     let scan_handle = thread::spawn(move || Self::scan(port, ping_timeout_millis, nodes));
 
     let lbtx = self.ec.lbtx.clone();
-    let listener_handle = thread::spawn(move || Self::listener(port, lbtx));
+    let (listener_tx, listener_rx) = mpsc::channel();
 
-    let event_handler_handle = thread::spawn(move || self.event_handler(port));
+    let listener_ec = EventChannel::new(lbtx, listener_rx, listener_tx.clone());
+    let listener_handle = thread::spawn(move || Self::listener(port, listener_ec));
+
+    let event_handler_handle = thread::spawn(move || self.event_handler(port, listener_tx));
 
     vec![scan_handle, listener_handle, event_handler_handle]
   }
 
-  fn event_handler(self, port: u16) {
+  fn event_handler(self, port: u16, listener_tx: Sender<Event>) {
     loop {
       let event = self.ec.rx.recv().unwrap();
 
@@ -63,6 +67,10 @@ impl Node {
               }
             }
           },
+          EventKind::Other => {
+            let event = Event::new(EventSender::Node, event.kind, event.data);
+            listener_tx.send(event).unwrap();
+          },
           _ => unreachable!()
         },
         _ => unreachable!()
@@ -70,7 +78,7 @@ impl Node {
     }
   }
 
-  fn listener(port: u16, tx: Sender<Event>) {
+  fn listener(port: u16, ec: EventChannel) {
     let listener = TcpListener::bind((tools::local_ip(), port)).unwrap();
 
     for stream in listener.incoming() {
@@ -86,10 +94,25 @@ impl Node {
           let data = String::from_utf8(buf[..size].to_vec()).unwrap();
           let (cmd, args) = data.split_once(";").unwrap();
 
-          let event_kind = cmd.try_into().unwrap();
+          let event_kind: EventKind = cmd.try_into().unwrap();
 
-          let event = Event::new(EventSender::Lb, event_kind, vec![args.to_string()]);
-          tx.send(event).unwrap();
+          let event = Event::new(EventSender::Lb, event_kind.clone(), vec![args.to_string()]);
+          ec.tx.send(event).unwrap();
+
+          if event_kind == EventKind::Other {
+            let event = ec.rx.recv().unwrap();
+
+            let mut args = String::new();
+            if event.data.len() != 0 {
+              for arg in event.data.iter() {
+                args += arg;
+              }
+            }
+
+            let data = EventKind::Other.to_string() + ";" + args.as_str();
+            let bytes = data.as_bytes();
+            stream.write(bytes).unwrap();
+          }
         },
         Err(_) => {}
       }
