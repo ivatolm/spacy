@@ -2,6 +2,7 @@ mod tools;
 mod event;
 mod node;
 mod plugin;
+mod protocol;
 
 use std::sync::mpsc;
 use event::{Event, EventSender, EventKind, EventChannel};

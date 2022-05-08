@@ -66,3 +66,11 @@ impl TryFrom<&str> for EventKind {
     }
   }
 }
+
+impl TryFrom<String> for EventKind {
+  type Error = ();
+
+  fn try_from(value: String) -> Result<Self, Self::Error> {
+    EventKind::try_from(value.as_str())
+  }
+}

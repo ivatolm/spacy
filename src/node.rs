@@ -6,6 +6,7 @@ use std::sync::{Mutex, Arc, mpsc::Sender};
 use std::io::{Read, Write};
 
 use crate::event::{Event, EventSender, EventKind, EventChannel};
+use crate::protocol::Message;
 use crate::tools;
 
 pub struct Node {
@@ -46,23 +47,20 @@ impl Node {
           EventKind::GetNodes => {
             let nodes = self.nodes.lock().unwrap();
             let result = nodes.iter()
-              .map(|ip| ip.to_string() + ";")
+              .map(|ip| ip.to_string())
               .collect();
 
             let event = Event::new(EventSender::Node, event.kind, result);
             self.ec.tx.send(event).unwrap();
           },
           EventKind::Broadcast => {
-            let msg = event.data.get(0).unwrap();
+            let event = Event::new(event.sender, EventKind::NewMessage, event.data);
+            let message = Message::from(event).to_string();
 
             let nodes = self.nodes.lock().unwrap();
             for node in nodes.iter() {
               match TcpStream::connect((*node, port)) {
-                Ok(mut stream) => {
-                  let data = EventKind::NewMessage.to_string() + ";" + msg;
-                  let bytes = data.as_bytes();
-                  stream.write(bytes).unwrap();
-                },
+                Ok(mut stream) => { stream.write(message.as_bytes()).unwrap(); },
                 Err(_) => {}
               }
             }
@@ -92,26 +90,31 @@ impl Node {
           }
 
           let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-          let (cmd, args) = data.split_once(";").unwrap();
+          let message = Message::from(data.clone()).to_vec();
+
+          let cmd = message.get(0).unwrap().to_string();
+          let args = match message.len() - 1 {
+            0 => vec![],
+            _ => message.get(1..message.len()).unwrap().to_vec()
+          };
 
           let event_kind: EventKind = cmd.try_into().unwrap();
+          let event = match event_kind  {
+            EventKind::NewPlugin => {
+              let message = Message::from(data);
+              Event::new(EventSender::Lb, event_kind.clone(), vec![message.skip_first()])
+            },
+            _ => {
+              Event::new(EventSender::Lb, event_kind.clone(), args)
+            }
+          };
 
-          let event = Event::new(EventSender::Lb, event_kind.clone(), vec![args.to_string()]);
           ec.tx.send(event).unwrap();
 
           if event_kind == EventKind::Other {
             let event = ec.rx.recv().unwrap();
-
-            let mut args = String::new();
-            if event.data.len() != 0 {
-              for arg in event.data.iter() {
-                args += arg;
-              }
-            }
-
-            let data = EventKind::Other.to_string() + ";" + args.as_str();
-            let bytes = data.as_bytes();
-            stream.write(bytes).unwrap();
+            let message = Message::from(event).to_string();
+            stream.write(message.as_bytes()).unwrap();
           }
         },
         Err(_) => {}

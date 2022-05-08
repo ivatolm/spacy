@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::event::{Event, EventSender, EventKind, EventChannel};
+use crate::protocol::Message;
 use crate::tools;
 
 pub struct Plugin {
@@ -63,46 +64,24 @@ impl Plugin {
       let size = stream.read(&mut buf).unwrap();
 
       let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-      let (cmd, args) = data.split_once(";").unwrap();
+      let message = Message::from(data).to_vec();
 
-      let event_kind = cmd.try_into().unwrap();
+      let cmd = message.get(0).unwrap().to_string();
+      let args = match message.len() - 1 {
+        0 => vec![],
+        _ => message.get(1..message.len()).unwrap().to_vec()
+      };
 
-      let event = Event::new(EventSender::Plugin, event_kind, vec![args.to_string()]);
+      let event_kind: EventKind = cmd.try_into().unwrap();
+
+      let event = Event::new(EventSender::Plugin, event_kind.clone(), args);
       ec.tx.send(event).unwrap();
 
       let event = ec.rx.recv().unwrap();
       match event.sender {
-        EventSender::Lb => match event.kind {
-          EventKind::GetNodes => {
-            let mut nodes = String::new();
-            if event.data.len() != 0 {
-              for node in event.data.iter() {
-                nodes += node;
-              }
-            }
-
-            let data = EventKind::GetNodes.to_string() + ";" + nodes.as_str();
-            let bytes = data.as_bytes();
-            stream.write(&bytes).unwrap();
-          },
-          EventKind::Broadcast => {
-            let data = EventKind::Broadcast.to_string() + ";";
-            let bytes = data.as_bytes();
-            stream.write(&bytes).unwrap();
-          },
-          EventKind::Other => {
-            let mut args = String::new();
-            if event.data.len() != 0 {
-              for arg in event.data.iter() {
-                args += arg;
-              }
-            }
-
-            let data = EventKind::Other.to_string() + ";" + args.as_str();
-            let bytes = data.as_bytes();
-            stream.write(&bytes).unwrap();
-          },
-          _ => {}
+        EventSender::Lb => {
+          let message = Message::from(event).to_string();
+          stream.write(message.as_bytes()).unwrap();
         },
         _ => {}
       }
