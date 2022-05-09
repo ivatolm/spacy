@@ -59,6 +59,9 @@ impl Node {
 
             let nodes = self.nodes.lock().unwrap();
             for node in nodes.iter() {
+              if *node == tools::local_ip() {
+                continue;
+              }
               match TcpStream::connect((*node, port)) {
                 Ok(mut stream) => { stream.write(message.as_bytes()).unwrap(); },
                 Err(_) => {}

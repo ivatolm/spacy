@@ -37,7 +37,12 @@ fn main() {
           plugins_txs.push(plugin_tx);
           plugins_join_handlers.push(join_handler);
         },
-        EventKind::NewMessage => {},
+        EventKind::NewMessage => {
+          let event = Event::new(EventSender::Main, event.kind, event.data);
+
+          let tx = plugins_txs.get(0).unwrap();
+          tx.send(event).unwrap();
+        },
         EventKind::GetNodes => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
 
@@ -53,6 +58,7 @@ fn main() {
         _ => panic!()
       },
       EventSender::Plugin => match event.kind {
+        EventKind::NoOp => {},
         EventKind::GetNodes => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
           node_tx.send(event).unwrap();
@@ -60,10 +66,6 @@ fn main() {
         EventKind::Broadcast => {
           let event = Event::new(EventSender::Main, EventKind::Broadcast, event.data);
           node_tx.send(event).unwrap();
-
-          let event = Event::new(EventSender::Main, EventKind::Broadcast, Vec::new());
-          let tx = plugins_txs.get(0).unwrap();
-          tx.send(event).unwrap();
         },
         EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);

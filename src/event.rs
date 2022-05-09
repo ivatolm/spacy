@@ -15,6 +15,7 @@ pub enum EventSender {
 
 #[derive(Clone, PartialEq)]
 pub enum EventKind {
+  NoOp,
   NewPlugin,
   NewMessage,
   GetNodes,
@@ -43,6 +44,7 @@ impl EventChannel {
 impl EventKind {
   pub fn to_string(&self) -> String {
     match self {
+      Self::NoOp => "no_op".to_string(),
       Self::NewPlugin => "new_plugin".to_string(),
       Self::NewMessage => "new_message".to_string(),
       Self::GetNodes => "get_nodes".to_string(),
@@ -57,6 +59,7 @@ impl TryFrom<&str> for EventKind {
 
   fn try_from(value: &str) -> Result<Self, Self::Error> {
     match value {
+      "no_op" => Ok(EventKind::NoOp),
       "new_plugin" => Ok(EventKind::NewPlugin),
       "new_message" => Ok(EventKind::NewMessage),
       "get_nodes" => Ok(EventKind::GetNodes),

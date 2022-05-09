@@ -77,7 +77,13 @@ impl Plugin {
       let event = Event::new(EventSender::Plugin, event_kind.clone(), args);
       ec.tx.send(event).unwrap();
 
-      let event = ec.rx.recv().unwrap();
+      let event = match ec.rx.try_recv() {
+        Ok(event) => {
+          event
+        },
+        Err(_) => Event::new(EventSender::Lb, EventKind::NoOp, vec![])
+      };
+
       match event.sender {
         EventSender::Lb => {
           let message = Message::from(event).to_string();
