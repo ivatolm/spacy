@@ -19,12 +19,12 @@ impl Plugin {
     Self { ec, source }
   }
 
-  pub fn start(self) -> Vec<JoinHandle<()>> {
+  pub fn start(self, port: u16) -> Vec<JoinHandle<()>> {
     let lbtx = self.ec.lbtx.clone();
     let (server_tx, server_rx) = mpsc::channel();
     let server_ec = EventChannel::new(lbtx.clone(), server_rx, server_tx.clone());
 
-    let server_handle = thread::spawn(move || Self::server(32001, server_ec));
+    let server_handle = thread::spawn(move || Self::server(port, server_ec));
 
     Command::new("python3")
       .arg("-c")

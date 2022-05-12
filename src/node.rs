@@ -47,6 +47,7 @@ impl Node {
           EventKind::GetNodes => {
             let nodes = self.nodes.lock().unwrap();
             let result = nodes.iter()
+              .filter(|ip| ip.to_string() != tools::local_ip().to_string())
               .map(|ip| ip.to_string())
               .collect();
 

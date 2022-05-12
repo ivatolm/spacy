@@ -32,24 +32,12 @@ fn main() {
           let source = event.data.get(0).unwrap();
 
           let plugin = Plugin::new(plugin_ec, source.to_string());
-          let join_handler = plugin.start();
+          let join_handler = plugin.start(32001);
 
           plugins_txs.push(plugin_tx);
           plugins_join_handlers.push(join_handler);
         },
-        EventKind::NewMessage => {
-          let event = Event::new(EventSender::Main, event.kind, event.data);
-
-          let tx = plugins_txs.get(0).unwrap();
-          tx.send(event).unwrap();
-        },
-        EventKind::GetNodes => {
-          let event = Event::new(EventSender::Main, event.kind, event.data);
-
-          let tx = plugins_txs.get(0).unwrap();
-          tx.send(event).unwrap();
-        },
-        EventKind::Other => {
+        EventKind::NewMessage | EventKind::GetNodes | EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
 
           let tx = plugins_txs.get(0).unwrap();
@@ -59,15 +47,7 @@ fn main() {
       },
       EventSender::Plugin => match event.kind {
         EventKind::NoOp => {},
-        EventKind::GetNodes => {
-          let event = Event::new(EventSender::Main, event.kind, event.data);
-          node_tx.send(event).unwrap();
-        },
-        EventKind::Broadcast => {
-          let event = Event::new(EventSender::Main, EventKind::Broadcast, event.data);
-          node_tx.send(event).unwrap();
-        },
-        EventKind::Other => {
+        EventKind::GetNodes | EventKind::Broadcast | EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
           node_tx.send(event).unwrap();
         },
