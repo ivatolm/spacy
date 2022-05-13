@@ -1,11 +1,9 @@
-mod tools;
-mod event;
+mod lib;
 mod node;
 mod plugin;
-mod protocol;
 
 use std::sync::mpsc;
-use event::{Event, EventSender, EventKind, EventChannel};
+use lib::event::{Event, EventSender, EventKind, EventChannel};
 use node::Node;
 use plugin::Plugin;
 

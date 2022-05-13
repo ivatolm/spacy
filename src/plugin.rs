@@ -5,9 +5,11 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::event::{Event, EventSender, EventKind, EventChannel};
-use crate::protocol::Message;
-use crate::tools;
+use crate::lib::{
+  protocol::Message,
+  event::{Event, EventSender, EventKind, EventChannel},
+  tools
+};
 
 pub struct Plugin {
   pub ec: EventChannel,

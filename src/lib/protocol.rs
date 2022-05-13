@@ -1,4 +1,4 @@
-use crate::event::Event;
+use crate::lib::event::Event;
 
 pub struct Message {
   message: Vec<String>
