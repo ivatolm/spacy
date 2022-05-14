@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::lib::{
+use common::{
   protocol::Message,
   event::{Event, EventSender, EventKind, EventChannel},
   tools

@@ -5,7 +5,7 @@ use std::thread::{self, JoinHandle};
 use std::sync::{Mutex, Arc, mpsc::Sender};
 use std::io::{Read, Write};
 
-use crate::lib::{
+use common::{
   event::{Event, EventSender, EventKind, EventChannel},
   protocol::Message,
   tools

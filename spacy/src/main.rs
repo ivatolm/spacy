@@ -1,9 +1,8 @@
-mod lib;
 mod node;
 mod plugin;
 
 use std::sync::mpsc;
-use lib::event::{Event, EventSender, EventKind, EventChannel};
+use common::event::{Event, EventSender, EventKind, EventChannel};
 use node::Node;
 use plugin::Plugin;
 
