@@ -10,7 +10,8 @@ pub enum EventSender {
   Lb,
   Main,
   Node,
-  Plugin
+  Plugin,
+  ClientHandler
 }
 
 #[derive(Clone, PartialEq)]
