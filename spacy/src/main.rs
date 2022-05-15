@@ -20,7 +20,7 @@ fn main() {
   let node = Node::new(32000, 100, node_ec);
 
   let mut plugins_txs: Vec<mpsc::Sender<Event>> = Vec::new();
-  let mut plugins_join_handlers = Vec::new();
+  let mut plugins = Vec::new();
 
   loop {
     let event = main_rx.recv().unwrap();
@@ -58,11 +58,10 @@ fn main() {
           let plugin_ec = EventChannel::new(main_tx.clone(), plugin_rx, plugin_tx.clone());
           let source = event.data.get(0).unwrap();
 
-          let plugin = Plugin::new(plugin_ec, source.to_string());
-          let join_handler = plugin.start(32001);
+          let plugin = Plugin::new(32001, source.to_string(), plugin_ec);
 
           plugins_txs.push(plugin_tx);
-          plugins_join_handlers.push(join_handler);
+          plugins.push(plugin);
         },
         EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
@@ -76,10 +75,8 @@ fn main() {
     }
   }
 
-  for plugin_handlers in plugins_join_handlers {
-    for handler in plugin_handlers {
-      handler.join().unwrap();
-    }
+  for plugin in plugins {
+    plugin.stop();
   }
   node.stop();
   client_handler.stop();

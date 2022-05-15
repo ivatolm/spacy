@@ -1,7 +1,6 @@
 use std::net::TcpListener;
 use std::io::{Read, Write};
 use std::process::Command;
-use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -12,49 +11,25 @@ use common::{
 };
 
 pub struct Plugin {
-  pub ec: EventChannel,
-  pub source: String
+  pub server_handle: JoinHandle<()>
 }
 
 impl Plugin {
-  pub fn new(ec: EventChannel, source: String) -> Self {
-    Self { ec, source }
-  }
-
-  pub fn start(self, port: u16) -> Vec<JoinHandle<()>> {
-    let lbtx = self.ec.lbtx.clone();
-    let (server_tx, server_rx) = mpsc::channel();
-    let server_ec = EventChannel::new(lbtx.clone(), server_rx, server_tx.clone());
-
-    let server_handle = thread::spawn(move || Self::server(port, server_ec));
+  pub fn new(port: u16, source:String, ec: EventChannel) -> Self {
+    let server_handle = thread::spawn(move || Self::server(port, ec));
 
     Command::new("python3")
       .arg("-c")
-      .arg(&self.source)
+      .arg(source)
       .spawn()
       .unwrap();
 
-    let event_handler_handle = thread::spawn(move || self.event_handler(server_tx));
-
-    vec![server_handle, event_handler_handle]
+    Self { server_handle }
   }
 
-  fn event_handler(self, server_tx: Sender<Event>) {
-    loop {
-      let event = self.ec.rx.recv().unwrap();
-
-      match event.sender {
-        EventSender::Plugin => {
-          let event = Event::new(EventSender::Plugin, event.kind, event.data);
-          self.ec.tx.send(event).unwrap();
-        },
-        EventSender::Main => {
-          let event = Event::new(EventSender::Lb, event.kind, event.data);
-          server_tx.send(event).unwrap();
-        },
-        _ => unreachable!()
-      }
-    }
+  pub fn stop(self) {
+    self.server_handle.join().unwrap();
+    unimplemented!()
   }
 
   fn server(port: u16, ec: EventChannel) {
@@ -80,19 +55,12 @@ impl Plugin {
       ec.tx.send(event).unwrap();
 
       let event = match ec.rx.try_recv() {
-        Ok(event) => {
-          event
-        },
+        Ok(event) => event,
         Err(_) => Event::new(EventSender::Lb, EventKind::NoOp, vec![])
       };
 
-      match event.sender {
-        EventSender::Lb => {
-          let message = Message::from(event).to_string();
-          stream.write(message.as_bytes()).unwrap();
-        },
-        _ => {}
-      }
+      let message = Message::from(event).to_string();
+      stream.write(message.as_bytes()).unwrap();
 
       thread::sleep(Duration::from_secs(1));
     }
