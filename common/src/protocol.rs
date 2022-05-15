@@ -36,6 +36,12 @@ impl From<&str> for Message {
   }
 }
 
+impl From<Vec<String>> for Message {
+  fn from(value: Vec<String>) -> Self {
+    Self { message: value }
+  }
+}
+
 impl From<String> for Message {
   fn from(value: String) -> Self {
     Message::from(value.as_str())

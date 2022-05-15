@@ -3,7 +3,7 @@ mod node;
 mod plugin;
 
 use std::sync::mpsc;
-use common::event::{Event, EventSender, EventKind, EventChannel};
+use common::{event::{Event, EventSender, EventKind, EventChannel}, protocol::Message};
 use client_handler::ClientHandler;
 use node::Node;
 use plugin::Plugin;
@@ -17,8 +17,7 @@ fn main() {
   let client_handler = ClientHandler::new(32002, client_handler_ec);
 
   let node_ec = EventChannel::new(main_tx.clone(), node_rx, node_tx.clone());
-  let node = Node::new(node_ec);
-  let node_join_handlers = node.start(32000, 100);
+  let node = Node::new(32000, 100, node_ec);
 
   let mut plugins_txs: Vec<mpsc::Sender<Event>> = Vec::new();
   let mut plugins_join_handlers = Vec::new();
@@ -38,7 +37,16 @@ fn main() {
       },
       EventSender::Plugin => match event.kind {
         EventKind::NoOp => {},
-        EventKind::GetNodes | EventKind::Broadcast | EventKind::Other => {
+        EventKind::GetNodes => {
+          let event = Event::new(EventSender::Main, event.kind, node.nodes());
+
+          let tx = plugins_txs.get(0).unwrap();
+          tx.send(event).unwrap();
+        },
+        EventKind::Broadcast => {
+          node.broadcast(32000, Message::from(event.data).to_string());
+        },
+        EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
           node_tx.send(event).unwrap();
         },
@@ -68,14 +76,11 @@ fn main() {
     }
   }
 
-  for handler in node_join_handlers {
-    handler.join().unwrap();
-  }
-
   for plugin_handlers in plugins_join_handlers {
     for handler in plugin_handlers {
       handler.join().unwrap();
     }
   }
+  node.stop();
   client_handler.stop();
 }

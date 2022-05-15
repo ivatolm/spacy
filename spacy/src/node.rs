@@ -1,8 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, TcpListener};
-use std::sync::mpsc;
 use std::time::Duration;
 use std::thread::{self, JoinHandle};
-use std::sync::{Mutex, Arc, mpsc::Sender};
+use std::sync::{Mutex, Arc};
 use std::io::{Read, Write};
 
 use common::{
@@ -12,72 +11,48 @@ use common::{
 };
 
 pub struct Node {
-  pub ec: EventChannel,
-  pub nodes: Arc<Mutex<Vec<IpAddr>>>
+  pub nodes: Arc<Mutex<Vec<IpAddr>>>,
+  pub scan_handle: JoinHandle<()>,
+  pub listener_handle: JoinHandle<()>
 }
 
 impl Node {
-  pub fn new(ec: EventChannel) -> Self {
-    Self { ec, nodes: Arc::new(Mutex::new(Vec::new())) }
+  pub fn new(port: u16, ping_timeout_millis: u64, ec: EventChannel) -> Self {
+    let nodes = Arc::new(Mutex::new(Vec::new()));
+
+    let nodes_clone = nodes.clone();
+    let scan_handle = thread::spawn(move || Self::scan(port, ping_timeout_millis, nodes_clone));
+    let listener_handle = thread::spawn(move || Self::listener(port, ec));
+
+    Self { nodes, scan_handle, listener_handle }
   }
 
-  pub fn start(self, port: u16, ping_timeout_millis: u64) -> Vec<JoinHandle<()>> {
-    let nodes = self.nodes.clone();
-    let scan_handle = thread::spawn(move || Self::scan(port, ping_timeout_millis, nodes));
-
-    let lbtx = self.ec.lbtx.clone();
-    let (listener_tx, listener_rx) = mpsc::channel();
-
-    let listener_ec = EventChannel::new(lbtx, listener_rx, listener_tx.clone());
-    let listener_handle = thread::spawn(move || Self::listener(port, listener_ec));
-
-    let event_handler_handle = thread::spawn(move || self.event_handler(port, listener_tx));
-
-    vec![scan_handle, listener_handle, event_handler_handle]
+  pub fn stop(self) {
+    self.scan_handle.join().unwrap();
+    self.listener_handle.join().unwrap();
+    unimplemented!()
   }
 
-  fn event_handler(self, port: u16, listener_tx: Sender<Event>) {
-    loop {
-      let event = self.ec.rx.recv().unwrap();
+  pub fn nodes(&self) -> Vec<String> {
+    let nodes = self.nodes.lock().unwrap();
+    let result = nodes.iter()
+      .filter(|ip| ip.to_string() != tools::local_ip().to_string())
+      .map(|ip| ip.to_string())
+      .collect();
 
-      match event.sender {
-        EventSender::Lb => {
-          let event = Event::new(EventSender::Node, event.kind, event.data);
-          self.ec.tx.send(event).unwrap();
-        },
-        EventSender::Main => match event.kind {
-          EventKind::GetNodes => {
-            let nodes = self.nodes.lock().unwrap();
-            let result = nodes.iter()
-              .filter(|ip| ip.to_string() != tools::local_ip().to_string())
-              .map(|ip| ip.to_string())
-              .collect();
+    result
+  }
 
-            let event = Event::new(EventSender::Node, event.kind, result);
-            self.ec.tx.send(event).unwrap();
-          },
-          EventKind::Broadcast => {
-            let event = Event::new(event.sender, EventKind::NewMessage, event.data);
-            let message = Message::from(event).to_string();
+  pub fn broadcast(&self, port: u16, message: String) {
+    let nodes = self.nodes.lock().unwrap();
+    for node in nodes.iter() {
+      if *node == tools::local_ip() {
+        continue;
+      }
 
-            let nodes = self.nodes.lock().unwrap();
-            for node in nodes.iter() {
-              if *node == tools::local_ip() {
-                continue;
-              }
-              match TcpStream::connect((*node, port)) {
-                Ok(mut stream) => { stream.write(message.as_bytes()).unwrap(); },
-                Err(_) => {}
-              }
-            }
-          },
-          EventKind::Other => {
-            let event = Event::new(EventSender::Node, event.kind, event.data);
-            listener_tx.send(event).unwrap();
-          },
-          _ => unreachable!()
-        },
-        _ => unreachable!()
+      match TcpStream::connect((*node, port)) {
+        Ok(mut stream) => { stream.write(message.as_bytes()).unwrap(); },
+        Err(_) => {}
       }
     }
   }
@@ -105,15 +80,7 @@ impl Node {
           };
 
           let event_kind: EventKind = cmd.try_into().unwrap();
-          let event = match event_kind  {
-            EventKind::NewPlugin => {
-              let message = Message::from(data);
-              Event::new(EventSender::Lb, event_kind.clone(), vec![message.skip_first()])
-            },
-            _ => {
-              Event::new(EventSender::Lb, event_kind.clone(), args)
-            }
-          };
+          let event = Event::new(EventSender::Node, event_kind.clone(), args);
 
           ec.tx.send(event).unwrap();
 
