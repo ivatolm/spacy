@@ -5,8 +5,8 @@ use std::sync::{Mutex, Arc};
 use std::io::{Read, Write};
 
 use common::{
+  message::{self, proto_msg},
   event::{Event, EventSender, EventKind, EventChannel},
-  protocol::Message,
   tools
 };
 
@@ -66,28 +66,21 @@ impl Node {
           let mut buf = [0u8; 16384];
           let size = stream.read(&mut buf).unwrap();
 
-          if size == 0 {
-            continue;
-          }
+          if size == 0 { continue }
 
-          let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-          let message = Message::from(data.clone()).to_vec();
-
-          let cmd = message.get(0).unwrap().to_string();
-          let args = match message.len() - 1 {
-            0 => vec![],
-            _ => message.get(1..message.len()).unwrap().to_vec()
-          };
-
-          let event_kind: EventKind = cmd.try_into().unwrap();
-          let event = Event::new(EventSender::Node, event_kind.clone(), args);
+          let msg = message::deserialize_message(&buf[..size]).unwrap();
+          let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
+          let event = Event::new(EventSender::Node, event_kind.clone(), msg.data);
 
           ec.tx.send(event).unwrap();
 
           if event_kind == EventKind::Other {
             let event = ec.rx.recv().unwrap();
-            let message = Message::from(event).to_string();
-            stream.write(message.as_bytes()).unwrap();
+            let msg = proto_msg::Message {
+              cmd: Some(event_kind.to_int()),
+              data: event.data
+            };
+            stream.write(&message::serialize_message(msg)).unwrap();
           }
         },
         Err(_) => {}

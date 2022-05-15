@@ -6,8 +6,8 @@ use std::thread;
 use std::time::Duration;
 use common::{
   tools,
-  protocol::Message,
-  event::{Event, EventSender, EventKind}
+  message::{self, proto_msg},
+  event::EventKind
 };
 
 #[pyclass]
@@ -73,27 +73,21 @@ impl SpacyPlugin {
   }
 
   fn send(&mut self, event: SpacyEvent) {
-    let event = Event::new(EventSender::Lb, event.kind, event.data);
-    let message = Message::from(event).to_string();
-    self.stream.write(message.as_bytes()).unwrap();
+    let msg = proto_msg::Message {
+      cmd: Some(event.kind.to_int()),
+      data: event.data
+    };
+    self.stream.write(&message::serialize_message(msg)).unwrap();
   }
 
   fn get(&mut self) -> SpacyEvent {
     let mut buf = [0u8; 16384];
     let size = self.stream.read(&mut buf).unwrap();
 
-    let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-    let message = Message::from(data).to_vec();
+    let msg = message::deserialize_message(&buf[..size]).unwrap();
+    let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
 
-    let cmd = message.get(0).unwrap().to_string();
-    let args = match message.len() - 1 {
-      0 => vec![],
-      _ => message.get(1..message.len()).unwrap().to_vec()
-    };
-
-    let event_kind: EventKind = cmd.try_into().unwrap();
-
-    SpacyEvent::new(event_kind.to_string(), args)
+    SpacyEvent::new(event_kind.to_string(), msg.data)
   }
 }
 

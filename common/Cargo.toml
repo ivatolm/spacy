@@ -9,3 +9,7 @@ crate-type = ["lib"]
 
 [dependencies]
 pnet = "*"
+prost = "*"
+
+[build-dependencies]
+prost-build = "*"

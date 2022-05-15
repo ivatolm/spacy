@@ -3,7 +3,7 @@ mod node;
 mod plugin;
 
 use std::sync::mpsc;
-use common::{event::{Event, EventSender, EventKind, EventChannel}, protocol::Message};
+use common::{event::{Event, EventSender, EventKind, EventChannel}};
 use client_handler::ClientHandler;
 use node::Node;
 use plugin::Plugin;
@@ -44,7 +44,7 @@ fn main() {
           tx.send(event).unwrap();
         },
         EventKind::Broadcast => {
-          node.broadcast(32000, Message::from(event.data).to_string());
+          node.broadcast(32000, event.data.get(0).unwrap().to_string());
         },
         EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);

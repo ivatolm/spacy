@@ -5,7 +5,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use common::{
-  protocol::Message,
+  message::{self, proto_msg},
   event::{Event, EventSender, EventKind, EventChannel},
   tools
 };
@@ -40,27 +40,33 @@ impl Plugin {
       let mut buf = [0u8; 16384];
       let size = stream.read(&mut buf).unwrap();
 
-      let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-      let message = Message::from(data).to_vec();
+      let msg = message::deserialize_message(&buf[..size]).unwrap();
+      let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
+      let event = Event::new(EventSender::Plugin, event_kind.clone(), msg.data);
 
-      let cmd = message.get(0).unwrap().to_string();
-      let args = match message.len() - 1 {
-        0 => vec![],
-        _ => message.get(1..message.len()).unwrap().to_vec()
-      };
-
-      let event_kind: EventKind = cmd.try_into().unwrap();
-
-      let event = Event::new(EventSender::Plugin, event_kind.clone(), args);
       ec.tx.send(event).unwrap();
+
+      if event_kind == EventKind::Other {
+        let event = ec.rx.recv().unwrap();
+        let msg = proto_msg::Message {
+          cmd: Some(event_kind.to_int()),
+          data: event.data
+        };
+        let msg = message::serialize_message(msg);
+        stream.write(&msg).unwrap();
+      }
 
       let event = match ec.rx.try_recv() {
         Ok(event) => event,
         Err(_) => Event::new(EventSender::Lb, EventKind::NoOp, vec![])
       };
 
-      let message = Message::from(event).to_string();
-      stream.write(message.as_bytes()).unwrap();
+      let msg = proto_msg::Message {
+        cmd: Some(event.kind.to_int()),
+        data: event.data
+      };
+      let msg = message::serialize_message(msg);
+      stream.write(&msg).unwrap();
 
       thread::sleep(Duration::from_secs(1));
     }

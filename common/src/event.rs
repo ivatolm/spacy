@@ -53,6 +53,17 @@ impl EventKind {
       Self::Other => "other".to_string()
     }
   }
+
+  pub fn to_int(&self) -> i32 {
+    match self {
+      Self::NoOp => 0,
+      Self::NewPlugin => 1,
+      Self::NewMessage => 2,
+      Self::GetNodes => 3,
+      Self::Broadcast => 4,
+      Self::Other => 5
+    }
+  }
 }
 
 impl TryFrom<&str> for EventKind {
@@ -76,5 +87,21 @@ impl TryFrom<String> for EventKind {
 
   fn try_from(value: String) -> Result<Self, Self::Error> {
     EventKind::try_from(value.as_str())
+  }
+}
+
+impl TryFrom<i32> for EventKind {
+  type Error = ();
+
+  fn try_from(value: i32) -> Result<Self, Self::Error> {
+    match value {
+      0 => Ok(EventKind::NoOp),
+      1 => Ok(EventKind::NewPlugin),
+      2 => Ok(EventKind::NewMessage),
+      3 => Ok(EventKind::GetNodes),
+      4 => Ok(EventKind::Broadcast),
+      5 => Ok(EventKind::Other),
+      _ => Err(())
+    }
   }
 }

@@ -5,7 +5,8 @@ use std::{
 };
 use common::{
   tools,
-  protocol::Message, event::{EventKind, EventSender, Event, EventChannel}
+  event::{EventKind, EventSender, Event, EventChannel},
+  message::{self, proto_msg}
 };
 
 pub struct ClientHandler {
@@ -35,32 +36,20 @@ impl ClientHandler {
         continue;
       }
 
-      let data = String::from_utf8(buf[..size].to_vec()).unwrap();
-      let message = Message::from(data.clone()).to_vec();
-
-      let cmd = message.get(0).unwrap().to_string();
-      let args = match message.len() - 1 {
-        0 => vec![],
-        _ => message.get(1..message.len()).unwrap().to_vec()
-      };
-
-      let event_kind: EventKind = cmd.try_into().unwrap();
-      let event = match event_kind {
-        EventKind::NewPlugin => {
-          let message = Message::from(data);
-          Event::new(EventSender::ClientHandler, event_kind.clone(), vec![message.skip_first()])
-        },
-        _ => {
-          Event::new(EventSender::ClientHandler, event_kind.clone(), args)
-        }
-      };
+      let msg = message::deserialize_message(&buf[..size]).unwrap();
+      let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
+      let event = Event::new(EventSender::ClientHandler, event_kind.clone(), msg.data);
 
       main_ec.tx.send(event).unwrap();
 
       if event_kind == EventKind::Other {
         let event = main_ec.rx.recv().unwrap();
-        let message = Message::from(event).to_string();
-        stream.write(message.as_bytes()).unwrap();
+        let msg = proto_msg::Message {
+          cmd: Some(event_kind.to_int()),
+          data: event.data
+        };
+        let msg = message::serialize_message(msg);
+        stream.write(&msg).unwrap();
       }
     }
   }

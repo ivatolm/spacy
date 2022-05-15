@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package common.message;
+
+message Message {
+  enum Cmd {
+    NONE = 0;
+    NEW_PLUGIN = 1;
+    NEW_MESSAGE = 2;
+    GET_NODES = 3;
+    BROADCAST = 4;
+    OTHER = 5;
+  }
+
+  optional Cmd cmd = 1;
+  repeated string data = 2;
+}
