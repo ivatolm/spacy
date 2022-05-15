@@ -27,7 +27,7 @@ fn main() {
 
     match event.sender {
       EventSender::Node => match event.kind {
-        EventKind::NewMessage | EventKind::GetNodes | EventKind::Other => {
+        EventKind::NewMessage | EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
 
           let tx = plugins_txs.get(0).unwrap();
@@ -48,7 +48,7 @@ fn main() {
         },
         EventKind::Other => {
           let event = Event::new(EventSender::Main, event.kind, event.data);
-          node_tx.send(event).unwrap();
+          client_handler_tx.send(event).unwrap();
         },
         _ => panic!()
       },

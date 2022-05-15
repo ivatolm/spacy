@@ -19,6 +19,16 @@ fn main() {
       };
       let msg = message::serialize_message(msg);
       stream.write(&msg).unwrap();
+    } else {
+      let input: Vec<String> = input_string.strip_suffix("\n").unwrap().to_string()
+        .split(' ').map(|x| x.to_string()).collect();
+
+      let msg = proto_msg::Message {
+        cmd: Some(EventKind::Other.to_int()),
+        data: input
+      };
+      let msg = message::serialize_message(msg);
+      stream.write(&msg).unwrap();
     }
 
     let mut buf = [0u8; 16384];

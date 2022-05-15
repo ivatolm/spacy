@@ -46,16 +46,6 @@ impl Plugin {
 
       ec.tx.send(event).unwrap();
 
-      if event_kind == EventKind::Other {
-        let event = ec.rx.recv().unwrap();
-        let msg = proto_msg::Message {
-          cmd: Some(event_kind.to_int()),
-          data: event.data
-        };
-        let msg = message::serialize_message(msg);
-        stream.write(&msg).unwrap();
-      }
-
       let event = match ec.rx.try_recv() {
         Ok(event) => event,
         Err(_) => Event::new(EventSender::Lb, EventKind::NoOp, vec![])
