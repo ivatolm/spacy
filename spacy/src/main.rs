@@ -1,6 +1,7 @@
 mod client_handler;
 mod node;
 mod plugin;
+mod fsm;
 
 use std::sync::mpsc;
 use common::{event::{Event, EventSender, EventKind, EventChannel}};
