@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-enum StateMachineError {
+#[derive(Debug)]
+pub enum StateMachineError {
   UnknownState,
   TrainsitionError
 }
 
-struct StateMachine {
+pub struct StateMachine {
   pub state: u8,
   pub map: HashMap<u8, Vec<u8>>
 }

@@ -5,7 +5,7 @@ mod fsm;
 
 use std::sync::mpsc;
 use common::{event::{Event, EventSender, EventKind, EventChannel}};
-use client_handler::ClientHandler;
+use client_handler::handler::ClientHandler;
 use node::Node;
 use plugin::Plugin;
 
@@ -14,8 +14,9 @@ fn main() {
   let (node_tx, node_rx) = mpsc::channel();
   let (main_tx, main_rx) = mpsc::channel();
 
-  let client_handler_ec = EventChannel::new(main_tx.clone(), client_handler_rx, client_handler_tx.clone());
-  let client_handler = ClientHandler::new(32002, client_handler_ec);
+  // let client_handler_ec = EventChannel::new(main_tx.clone(), client_handler_rx, client_handler_tx.clone());
+  let client_handler = ClientHandler::new();
+  client_handler.start(32002);
 
   let node_ec = EventChannel::new(main_tx.clone(), node_rx, node_tx.clone());
   let node = Node::new(32000, 100, node_ec);
@@ -80,5 +81,4 @@ fn main() {
     plugin.stop();
   }
   node.stop();
-  client_handler.stop();
 }

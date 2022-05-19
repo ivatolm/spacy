@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 use pnet::{datalink, ipnetwork::IpNetwork};
+use rand::Rng;
 
 pub fn interfaces() -> Vec<IpNetwork> {
   let interfaces = datalink::interfaces()
@@ -19,4 +20,9 @@ pub fn local_ip() -> IpAddr {
 
 pub fn get_octet(address: IpAddr) -> [u8; 4] {
   address.to_string().parse::<Ipv4Addr>().unwrap().octets()
+}
+
+pub fn gen_random_id() -> u8 {
+  let mut rng = rand::thread_rng();
+  rng.gen()
 }
