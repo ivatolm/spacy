@@ -3,12 +3,18 @@ use std::io::{Read, Write};
 use std::process::Command;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-
 use common::{
+  events::MPEvents,
   message::{self, proto_msg},
-  event::{Event, EventSender, EventKind, EventChannel},
+  event::{Event, EventChannel},
   tools
 };
+use num_derive::FromPrimitive;
+
+#[derive(FromPrimitive)]
+enum SelfEvents {
+  NoOp = 0
+}
 
 pub struct Plugin {
   pub server_handle: JoinHandle<()>
@@ -41,19 +47,25 @@ impl Plugin {
       let size = stream.read(&mut buf).unwrap();
 
       let msg = message::deserialize_message(&buf[..size]).unwrap();
-      let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
-      let event = Event::new(EventSender::Plugin, event_kind.clone(), msg.data);
+      let msg_data = msg.data.iter()
+        .map(|x| x.as_bytes().to_vec())
+        .collect();
+      let event = Event::new(MPEvents::NewMainCommand as u8, msg_data);
 
       ec.tx.send(event).unwrap();
 
       let event = match ec.rx.try_recv() {
         Ok(event) => event,
-        Err(_) => Event::new(EventSender::Lb, EventKind::NoOp, vec![])
+        Err(_) => Event::new(SelfEvents::NoOp as u8, vec![])
       };
 
       let msg = proto_msg::Message {
-        cmd: Some(event.kind.to_int()),
-        data: event.data
+        cmd: Some(event.kind as i32),
+        data: {
+          event.data.into_iter()
+            .map(|x| String::from_utf8_lossy(&x).into_owned())
+            .collect()
+        }
       };
       let msg = message::serialize_message(msg);
       stream.write(&msg).unwrap();

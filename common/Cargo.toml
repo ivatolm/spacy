@@ -11,6 +11,8 @@ crate-type = ["lib"]
 pnet = "*"
 prost = "*"
 rand = "*"
+num-traits = "*"
+num-derive = "*"
 
 [build-dependencies]
 prost-build = "*"

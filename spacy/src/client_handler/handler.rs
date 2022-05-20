@@ -1,7 +1,13 @@
 use std::{thread, sync::{mpsc::{self, Receiver, Sender}, Arc, Mutex}, net::{TcpListener, TcpStream}, collections::HashMap, io::Read};
-use common::{event::{Event, EventSender, EventKind}, tools, message};
-use crate::fsm::StateMachine;
+use num_derive::FromPrimitive;
+use common::{event::Event, tools};
+use crate::{fsm::StateMachine};
 use super::handler_fsm_data::{ClientHandlerStates, gen_transitions};
+
+#[derive(FromPrimitive)]
+enum SelfEvents {
+  NewConnection = 0
+}
 
 pub struct ClientHandler {
   fsm: StateMachine,
@@ -67,7 +73,7 @@ impl ClientHandler {
       let mut clients = clients.lock().unwrap();
       clients.insert(id, stream);
 
-      let event = Event::new(EventSender::Lb, EventKind::NewConnection, vec![id.to_string()]);
+      let event = Event::new(SelfEvents::NewConnection as u8, vec![vec![id]]);
       tx.send(event).unwrap();
     }
   }

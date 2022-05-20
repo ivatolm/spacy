@@ -4,13 +4,14 @@ mod plugin;
 mod fsm;
 
 use std::sync::mpsc;
-use common::{event::{Event, EventSender, EventKind, EventChannel}};
+use num_traits::FromPrimitive;
+use common::{event::{Event, EventChannel}, events::{MCEvents, MNEvents, MPEvents}};
 use client_handler::handler::ClientHandler;
 use node::Node;
 use plugin::Plugin;
 
 fn main() {
-  let (client_handler_tx, client_handler_rx) = mpsc::channel();
+  // let (client_handler_tx, client_handler_rx) = mpsc::channel();
   let (node_tx, node_rx) = mpsc::channel();
   let (main_tx, main_rx) = mpsc::channel();
 
@@ -22,63 +23,85 @@ fn main() {
   let node = Node::new(32000, 100, node_ec);
 
   let mut plugins_txs: Vec<mpsc::Sender<Event>> = Vec::new();
-  let mut plugins = Vec::new();
+  // let mut plugins = Vec::new();
 
   loop {
     let event = main_rx.recv().unwrap();
 
-    match event.sender {
-      EventSender::Node => match event.kind {
-        EventKind::NewMessage | EventKind::Other => {
-          let event = Event::new(EventSender::Main, event.kind, event.data);
+    match FromPrimitive::from_u8(event.kind) {
+      Some(MCEvents::AddPlugin) => println!("AddPlugin!"),
+      Some(MCEvents::NewPluginCommand) => println!("NewPluginCommand!"),
+      None => {}
+    }
 
-          let tx = plugins_txs.get(0).unwrap();
-          tx.send(event).unwrap();
-        },
-        _ => panic!()
-      },
-      EventSender::Plugin => match event.kind {
-        EventKind::NoOp => {},
-        EventKind::GetNodes => {
-          let event = Event::new(EventSender::Main, event.kind, node.nodes());
+    match FromPrimitive::from_u8(event.kind) {
+      Some(MNEvents::NewMessage) => println!("NewMessage!"),
+      None => {}
+    }
 
-          let tx = plugins_txs.get(0).unwrap();
-          tx.send(event).unwrap();
-        },
-        EventKind::Broadcast => {
-          node.broadcast(32000, event.data.get(0).unwrap().to_string());
-        },
-        EventKind::Other => {
-          let event = Event::new(EventSender::Main, event.kind, event.data);
-          client_handler_tx.send(event).unwrap();
-        },
-        _ => panic!()
-      },
-      EventSender::ClientHandler => match event.kind {
-        EventKind::NewPlugin => {
-          let (plugin_tx, plugin_rx) = mpsc::channel();
-          let plugin_ec = EventChannel::new(main_tx.clone(), plugin_rx, plugin_tx.clone());
-          let source = event.data.get(0).unwrap();
-
-          let plugin = Plugin::new(32001, source.to_string(), plugin_ec);
-
-          plugins_txs.push(plugin_tx);
-          plugins.push(plugin);
-        },
-        EventKind::Other => {
-          let event = Event::new(EventSender::Main, event.kind, event.data);
-
-          let tx = plugins_txs.get(0).unwrap();
-          tx.send(event).unwrap();
-        },
-        _ => panic!()
-      },
-      _ => break
+    match FromPrimitive::from_u8(event.kind) {
+      Some(MPEvents::GetNodes) => println!("GetNodes!"),
+      Some(MPEvents::NewMainCommand) => println!("NewMainCommand!"),
+      Some(MPEvents::NewPluginCommand) => println!("NewPluginCommand!"),
+      None => {}
     }
   }
 
-  for plugin in plugins {
-    plugin.stop();
-  }
-  node.stop();
+  // loop {
+  //   let event = main_rx.recv().unwrap();
+
+  //   match event.sender {
+  //     EventSender::Node => match event.kind {
+  //       EventKind::NewMessage | EventKind::Other => {
+  //         let event = Event::new(EventSender::Main, event.kind, event.data);
+
+  //         let tx = plugins_txs.get(0).unwrap();
+  //         tx.send(event).unwrap();
+  //       },
+  //       _ => panic!()
+  //     },
+  //     EventSender::Plugin => match event.kind {
+  //       EventKind::NoOp => {},
+  //       EventKind::GetNodes => {
+  //         let event = Event::new(EventSender::Main, event.kind, node.nodes());
+
+  //         let tx = plugins_txs.get(0).unwrap();
+  //         tx.send(event).unwrap();
+  //       },
+  //       EventKind::Broadcast => {
+  //         node.broadcast(32000, event.data.get(0).unwrap().to_string());
+  //       },
+  //       EventKind::Other => {
+  //         let event = Event::new(EventSender::Main, event.kind, event.data);
+  //         client_handler_tx.send(event).unwrap();
+  //       },
+  //       _ => panic!()
+  //     },
+  //     EventSender::ClientHandler => match event.kind {
+  //       EventKind::NewPlugin => {
+  //         let (plugin_tx, plugin_rx) = mpsc::channel();
+  //         let plugin_ec = EventChannel::new(main_tx.clone(), plugin_rx, plugin_tx.clone());
+  //         let source = event.data.get(0).unwrap();
+
+  //         let plugin = Plugin::new(32001, source.to_string(), plugin_ec);
+
+  //         plugins_txs.push(plugin_tx);
+  //         plugins.push(plugin);
+  //       },
+  //       EventKind::Other => {
+  //         let event = Event::new(EventSender::Main, event.kind, event.data);
+
+  //         let tx = plugins_txs.get(0).unwrap();
+  //         tx.send(event).unwrap();
+  //       },
+  //       _ => panic!()
+  //     },
+  //     _ => break
+  //   }
+  // }
+
+  // for plugin in plugins {
+  //   plugin.stop();
+  // }
+  // node.stop();
 }

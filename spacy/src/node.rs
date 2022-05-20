@@ -4,9 +4,10 @@ use std::thread::{self, JoinHandle};
 use std::sync::{Mutex, Arc};
 use std::io::{Read, Write};
 
+use common::events::MNEvents;
 use common::{
   message::{self, proto_msg},
-  event::{Event, EventSender, EventKind, EventChannel},
+  event::{Event, EventChannel},
   tools
 };
 
@@ -69,19 +70,21 @@ impl Node {
           if size == 0 { continue }
 
           let msg = message::deserialize_message(&buf[..size]).unwrap();
-          let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
-          let event = Event::new(EventSender::Node, event_kind.clone(), msg.data);
+          let msg_data = msg.data.iter()
+            .map(|x| x.as_bytes().to_vec())
+            .collect();
+          let event = Event::new(MNEvents::NewMessage as u8, msg_data);
 
           ec.tx.send(event).unwrap();
 
-          if event_kind == EventKind::Other {
-            let event = ec.rx.recv().unwrap();
-            let msg = proto_msg::Message {
-              cmd: Some(event_kind.to_int()),
-              data: event.data
-            };
-            stream.write(&message::serialize_message(msg)).unwrap();
-          }
+          // if event_kind == EventKind::Other {
+          //   let event = ec.rx.recv().unwrap();
+          //   let msg = proto_msg::Message {
+          //     cmd: Some(event_kind.to_int()),
+          //     data: event.data
+          //   };
+          //   stream.write(&message::serialize_message(msg)).unwrap();
+          // }
         },
         Err(_) => {}
       }

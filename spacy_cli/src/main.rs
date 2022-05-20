@@ -1,5 +1,5 @@
 use std::{net::TcpStream, io::{stdin, Write, Read, self}, fs};
-use common::{tools, message::{proto_msg, self}, event::EventKind};
+use common::{tools, message::{proto_msg, self}, events::MCEvents};
 
 fn main() {
   loop {
@@ -14,7 +14,7 @@ fn main() {
       let content = fs::read_to_string("plugin.py").unwrap();
 
       let msg = proto_msg::Message {
-        cmd: Some(EventKind::NewPlugin.to_int()),
+        cmd: Some(MCEvents::AddPlugin as i32),
         data: vec![content]
       };
       let msg = message::serialize_message(msg);
@@ -24,7 +24,7 @@ fn main() {
         .split(' ').map(|x| x.to_string()).collect();
 
       let msg = proto_msg::Message {
-        cmd: Some(EventKind::Other.to_int()),
+        cmd: Some(MCEvents::NewPluginCommand as i32),
         data: input
       };
       let msg = message::serialize_message(msg);

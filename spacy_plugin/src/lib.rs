@@ -1,3 +1,4 @@
+use num_derive::FromPrimitive;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use std::net::TcpStream;
@@ -6,29 +7,31 @@ use std::thread;
 use std::time::Duration;
 use common::{
   tools,
-  message::{self, proto_msg},
-  event::EventKind
+  message::{self, proto_msg}
 };
+
+#[derive(FromPrimitive)]
+enum SelfEvents {
+  NoOp = 0
+}
 
 #[pyclass]
 #[derive(Clone)]
 struct SpacyEvent {
-  pub kind: EventKind,
+  pub kind: u8,
   pub data: Vec<String>
 }
 
 #[pymethods]
 impl SpacyEvent {
   #[new]
-  fn new(kind: String, data: Vec<String>) -> Self {
-    let kind = EventKind::try_from(kind).unwrap();
-
+  fn new(kind: u8, data: Vec<String>) -> Self {
     Self { kind, data }
   }
 
   #[getter]
-  fn kind(&self) -> String {
-    self.kind.to_string()
+  fn kind(&self) -> u8 {
+    self.kind
   }
 
   #[getter]
@@ -52,11 +55,11 @@ impl SpacyPlugin {
   }
 
   fn update(&self, _event: SpacyEvent) -> SpacyEvent {
-    SpacyEvent::new(EventKind::NoOp.to_string(), vec![])
+    SpacyEvent::new(SelfEvents::NoOp as u8, vec![])
   }
 
   fn run(mut _self: PyRefMut<'_, Self>) {
-    let mut response = SpacyEvent::new(EventKind::NoOp.to_string(), vec![]);
+    let mut response = SpacyEvent::new(SelfEvents::NoOp as u8, vec![]);
     let gil = Python::acquire_gil();
     let py = gil.python();
     let obj = _self.into_py(py);
@@ -74,7 +77,7 @@ impl SpacyPlugin {
 
   fn send(&mut self, event: SpacyEvent) {
     let msg = proto_msg::Message {
-      cmd: Some(event.kind.to_int()),
+      cmd: Some(event.kind as i32),
       data: event.data
     };
     self.stream.write(&message::serialize_message(msg)).unwrap();
@@ -85,9 +88,8 @@ impl SpacyPlugin {
     let size = self.stream.read(&mut buf).unwrap();
 
     let msg = message::deserialize_message(&buf[..size]).unwrap();
-    let event_kind = EventKind::try_from(msg.cmd.unwrap()).unwrap();
 
-    SpacyEvent::new(event_kind.to_string(), msg.data)
+    SpacyEvent::new(msg.cmd.unwrap() as u8, msg.data)
   }
 }
 
