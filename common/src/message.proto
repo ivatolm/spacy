@@ -3,6 +3,10 @@ syntax = "proto3";
 package common.message;
 
 message Message {
-  optional int32 cmd = 1;
+  enum Cmd {
+    RESPONSE = 0;
+    ADD_PLUGIN = 1;
+  };
+  optional Cmd cmd = 1;
   repeated string data = 2;
 }

@@ -73,7 +73,7 @@ impl Node {
           let msg_data = msg.data.iter()
             .map(|x| x.as_bytes().to_vec())
             .collect();
-          let event = Event::new(MNEvents::NewMessage as u8, msg_data);
+          let event = Event::new(MNEvents::NewMessage as u8, msg_data, vec![]);
 
           ec.tx.send(event).unwrap();
 

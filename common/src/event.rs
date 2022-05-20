@@ -2,7 +2,8 @@ use std::sync::mpsc::{Sender, Receiver};
 
 pub struct Event {
   pub kind: u8,
-  pub data: Vec<Vec<u8>>
+  pub data: Vec<Vec<u8>>,
+  pub meta: Vec<u8>
 }
 
 pub struct EventChannel {
@@ -12,8 +13,8 @@ pub struct EventChannel {
 }
 
 impl Event {
-  pub fn new(kind: u8, data: Vec<Vec<u8>>) -> Self {
-    Self { kind, data }
+  pub fn new(kind: u8, data: Vec<Vec<u8>>, meta: Vec<u8>) -> Self {
+    Self { kind, data, meta }
   }
 }
 

@@ -1,5 +1,5 @@
 use std::{net::TcpStream, io::{stdin, Write, Read, self}, fs};
-use common::{tools, message::{proto_msg, self}, events::MCEvents};
+use common::{tools, message::{proto_msg, self}};
 
 fn main() {
   loop {
@@ -14,21 +14,21 @@ fn main() {
       let content = fs::read_to_string("plugin.py").unwrap();
 
       let msg = proto_msg::Message {
-        cmd: Some(MCEvents::AddPlugin as i32),
+        cmd: Some(proto_msg::message::Cmd::AddPlugin as i32),
         data: vec![content]
       };
       let msg = message::serialize_message(msg);
       stream.write(&msg).unwrap();
     } else {
-      let input: Vec<String> = input_string.strip_suffix("\n").unwrap().to_string()
-        .split(' ').map(|x| x.to_string()).collect();
+      // let input: Vec<String> = input_string.strip_suffix("\n").unwrap().to_string()
+      //   .split(' ').map(|x| x.to_string()).collect();
 
-      let msg = proto_msg::Message {
-        cmd: Some(MCEvents::NewPluginCommand as i32),
-        data: input
-      };
-      let msg = message::serialize_message(msg);
-      stream.write(&msg).unwrap();
+      // let msg = proto_msg::Message {
+        // cmd: Some(proto_msg::message::Cmd:: as i32),
+      //   data: input
+      // };
+      // let msg = message::serialize_message(msg);
+      // stream.write(&msg).unwrap();
     }
 
     let mut buf = [0u8; 16384];

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use log::warn;
+
 #[derive(Debug)]
 pub enum StateMachineError {
   UnknownState,
@@ -19,11 +21,18 @@ impl StateMachine {
     }
   }
 
-  pub fn transition(&self, target_state: u8) -> Result<(), StateMachineError> {
+  pub fn transition(&mut self, target_state: u8) -> Result<(), StateMachineError> {
+    if self.state == target_state {
+      warn!("Transitioning into the same state");
+    }
+
     match self.map.get(&self.state) {
       Some(states) => {
         match states.contains(&target_state) {
-          true => Ok(()),
+          true => {
+            self.state = target_state;
+            Ok(())
+          },
           false => Err(StateMachineError::TrainsitionError)
         }
       }

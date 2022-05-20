@@ -50,13 +50,13 @@ impl Plugin {
       let msg_data = msg.data.iter()
         .map(|x| x.as_bytes().to_vec())
         .collect();
-      let event = Event::new(MPEvents::NewMainCommand as u8, msg_data);
+      let event = Event::new(MPEvents::NewMainCommand as u8, msg_data, vec![]);
 
       ec.tx.send(event).unwrap();
 
       let event = match ec.rx.try_recv() {
         Ok(event) => event,
-        Err(_) => Event::new(SelfEvents::NoOp as u8, vec![])
+        Err(_) => Event::new(SelfEvents::NoOp as u8, vec![], vec![])
       };
 
       let msg = proto_msg::Message {

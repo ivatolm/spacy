@@ -1,25 +1,19 @@
 use std::collections::HashMap;
 
-pub enum ClientHandlerStates {
+pub enum ClientHandlerState {
   Err = 0,
   Init = 1,
   WaitEvent = 2
 }
 
-impl ClientHandlerStates {
-  pub fn to_u8(&self) -> u8 {
-    ClientHandlerStates::Init as u8
-  }
-}
-
-impl TryFrom<u8> for ClientHandlerStates {
+impl TryFrom<u8> for ClientHandlerState {
   type Error = ();
 
   fn try_from(value: u8) -> Result<Self, Self::Error> {
     match value {
-      0 => Ok(ClientHandlerStates::Err),
-      1 => Ok(ClientHandlerStates::Init),
-      2 => Ok(ClientHandlerStates::WaitEvent),
+      0 => Ok(ClientHandlerState::Err),
+      1 => Ok(ClientHandlerState::Init),
+      2 => Ok(ClientHandlerState::WaitEvent),
       _ => Err(())
     }
   }
@@ -28,8 +22,8 @@ impl TryFrom<u8> for ClientHandlerStates {
 pub fn gen_transitions() -> HashMap::<u8, Vec<u8>> {
   let mut trainsitions = HashMap::<u8, Vec<u8>>::new();
 
-  trainsitions.insert(ClientHandlerStates::Init.to_u8(), vec![
-    ClientHandlerStates::WaitEvent.to_u8()
+  trainsitions.insert(ClientHandlerState::Init as u8, vec![
+    ClientHandlerState::WaitEvent as u8
   ]);
 
   trainsitions

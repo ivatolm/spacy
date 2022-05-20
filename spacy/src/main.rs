@@ -4,6 +4,7 @@ mod plugin;
 mod fsm;
 
 use std::sync::mpsc;
+use log::debug;
 use num_traits::FromPrimitive;
 use common::{event::{Event, EventChannel}, events::{MCEvents, MNEvents, MPEvents}};
 use client_handler::handler::ClientHandler;
@@ -11,15 +12,19 @@ use node::Node;
 use plugin::Plugin;
 
 fn main() {
+  env_logger::init();
+
   // let (client_handler_tx, client_handler_rx) = mpsc::channel();
   let (node_tx, node_rx) = mpsc::channel();
   let (main_tx, main_rx) = mpsc::channel();
 
   // let client_handler_ec = EventChannel::new(main_tx.clone(), client_handler_rx, client_handler_tx.clone());
   let client_handler = ClientHandler::new();
-  client_handler.start(32002);
+  debug!("Starting client handler...");
+  client_handler.start(32002, main_tx.clone());
 
   let node_ec = EventChannel::new(main_tx.clone(), node_rx, node_tx.clone());
+  debug!("Starting node...");
   let node = Node::new(32000, 100, node_ec);
 
   let mut plugins_txs: Vec<mpsc::Sender<Event>> = Vec::new();
@@ -29,20 +34,20 @@ fn main() {
     let event = main_rx.recv().unwrap();
 
     match FromPrimitive::from_u8(event.kind) {
-      Some(MCEvents::AddPlugin) => println!("AddPlugin!"),
-      Some(MCEvents::NewPluginCommand) => println!("NewPluginCommand!"),
+      Some(MCEvents::AddPlugin) => debug!("AddPlugin!"),
+      Some(MCEvents::NewPluginCommand) => debug!("NewPluginCommand!"),
       None => {}
     }
 
     match FromPrimitive::from_u8(event.kind) {
-      Some(MNEvents::NewMessage) => println!("NewMessage!"),
+      Some(MNEvents::NewMessage) => debug!("NewMessage!"),
       None => {}
     }
 
     match FromPrimitive::from_u8(event.kind) {
-      Some(MPEvents::GetNodes) => println!("GetNodes!"),
-      Some(MPEvents::NewMainCommand) => println!("NewMainCommand!"),
-      Some(MPEvents::NewPluginCommand) => println!("NewPluginCommand!"),
+      Some(MPEvents::GetNodes) => debug!("GetNodes!"),
+      Some(MPEvents::NewMainCommand) => debug!("NewMainCommand!"),
+      Some(MPEvents::NewPluginCommand) => debug!("NewPluginCommand!"),
       None => {}
     }
   }

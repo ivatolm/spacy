@@ -8,3 +8,5 @@ common = { path = "../common" }
 pnet = "*"
 num-traits = "*"
 num-derive = "*"
+log = "*"
+env_logger = "*"
