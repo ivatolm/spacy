@@ -1,7 +1,0 @@
-[package]
-name = "spacy_cli"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-common = { path = "../common" }
