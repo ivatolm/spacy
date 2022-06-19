@@ -1,2 +1,2 @@
 [workspace]
-members = ["spacy"]
+members = ["common", "spacy"]
