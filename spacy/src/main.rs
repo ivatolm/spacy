@@ -1,15 +1,13 @@
-use std::collections::{HashMap, HashSet};
+mod server;
 
-use common::fsm;
+use server::Server;
 
-fn main() -> Result<(), fsm::FSMError> {
-    let mut fsm = fsm::FSM::new(0, HashMap::from([
-        (0, HashSet::from([0]))
-    ]));
+fn main() {
+    let server = Server::new();
+    let server_handle = server.start();
 
-    fsm.transition(0)?; // passes
-
-    fsm.transition(1)?; // failes
-
-    Ok(())
+    match server_handle.join() {
+        Ok(_) => {},
+        Err(_) => {}
+    };
 }

@@ -1,32 +1,39 @@
-use std::collections::{HashMap, HashSet};
-
-#[derive(Debug)]
-pub enum FSMError {
-    FSMTransitionError
-}
+use std::collections::{LinkedList, HashMap};
 
 pub struct FSM {
-    state: u8,
-    transition_table: HashMap<u8, HashSet<u8>>
+    pub state: u8,
+    queue: LinkedList<u8>,
+    transition_table: HashMap<u8, Vec<u8>>
+}
+
+pub enum FSMError {
+    TransitionError
 }
 
 impl FSM {
-    pub fn new(init_state: u8, transition_table: HashMap<u8, HashSet<u8>>) -> Self {
-        Self { state: init_state, transition_table }
+    pub fn new(init_state: u8, transition_table: HashMap<u8, Vec<u8>>) -> Self {
+        Self {
+            state: init_state,
+            queue: LinkedList::new(),
+            transition_table
+        }
     }
 
-    pub fn transition(&mut self, new_state: u8) -> Result<(), FSMError> {
-        if let Some(row) = self.transition_table.get(&self.state) {
-            if row.get(&new_state).is_some() {
-                self.state = new_state;
+    pub fn transition(&mut self, next_state: u8) -> Result<(), FSMError> {
+        if let Some(states) = self.transition_table.get(&self.state) {
+            if states.contains(&next_state) {
                 return Ok(());
             }
         }
 
-        Err(FSMError::FSMTransitionError)
+        Err(FSMError::TransitionError)
     }
 
-    pub fn state(&self) -> u8 {
-        self.state
+    pub fn push_event(&mut self, event: u8) {
+        self.queue.push_back(event);
+    }
+
+    pub fn pop_event(&mut self) -> Option<u8> {
+        self.queue.pop_front()
     }
 }
