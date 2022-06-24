@@ -22,6 +22,7 @@ impl FSM {
     pub fn transition(&mut self, next_state: u8) -> Result<(), FSMError> {
         if let Some(states) = self.transition_table.get(&self.state) {
             if states.contains(&next_state) {
+                self.state = next_state;
                 return Ok(());
             }
         }
