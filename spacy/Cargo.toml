@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 nix = "*"
+log = "*"
+env_logger = "*"

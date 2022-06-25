@@ -37,20 +37,25 @@ impl Server {
     // 1 - waiting for events
     // 2 - handling incoming event
     // 3 - handling outcoming event
+    // 4 - stop
 
     pub fn new(main_event_channel_tx: mpsc::Sender<proto_msg::Event>) -> Self {
         let fsm = FSM::new(0, HashMap::from([
-            (0, vec![1]),
-            (1, vec![2, 3]),
-            (2, vec![1]),
-            (3, vec![1])
+            (0, vec![1, 4]),
+            (1, vec![2, 3, 4]),
+            (2, vec![1, 4]),
+            (3, vec![1, 4]),
+            (4, vec![])
         ]));
 
+        // Creating main event communication channel
         let (event_channel_tx, event_channel_rx) = mpsc::channel();
 
+        // Creating communication channel with `listener`
         let (listener_event_channel_tx, listener_event_channel_rx) = mpsc::channel();
         let server_event_channel_tx = event_channel_tx.clone();
 
+        // Spawning `listener`
         let listener_handle = thread::spawn(move || {
             Self::t_listener(listener_event_channel_rx, server_event_channel_tx);
         });
@@ -71,6 +76,8 @@ impl Server {
     pub fn start(mut self) -> (mpsc::Sender<proto_msg::Event>,
                                thread::JoinHandle<Result<(), ServerError>>) {
         let event_channel_tx_clone = self.event_channel_tx.clone();
+
+        // Starting FSM loop
         let handle = thread::spawn(move || loop {
             match self.fsm.state {
                 0 => self.init()?,
@@ -89,14 +96,22 @@ impl Server {
     }
 
     fn init(&mut self) -> Result<(), ServerError> {
+        log::debug!("State `init`");
+
+        // For each avaliable ip creating a listener(server)
+        // TODO: Add support for ipv6 ips
         let mut servers = vec![];
         for ip in utils::get_ipv4_ips() {
             match TcpListener::bind((ip, 32000)) {
                 Ok(listener) => {
+                    log::info!("Started listener {}", listener.local_addr().unwrap());
+
+                    // Adding a new server to servers-list
                     let fd = listener.as_raw_fd();
                     servers.push(fd);
                     self.servers.insert(fd, listener);
 
+                    // Notifing `listener` thread about new server
                     let event = proto_msg::Event {
                         dir: proto_msg::event::Direction::Internal as i32,
                         kind: proto_msg::event::Kind::NewFd as i32,
@@ -104,8 +119,8 @@ impl Server {
                     };
                     self.listener_event_channel_tx.send(event).unwrap();
                 },
-                Err(_) => {
-                    todo!("Properly log the error");
+                Err(error) => {
+                    log::warn!("Couldn't start a listener {}: {}", ip, error);
                 }
             }
         }
@@ -115,21 +130,36 @@ impl Server {
     }
 
     fn wait_event(&mut self) -> Result<(), ServerError> {
+        log::debug!("State `wait_event`");
+
+        // Waiting for new events
         let event = match self.event_channel_rx.recv() {
             Ok(event) => event,
-            Err(_) => {
-                todo!("Properly log the error");
+            Err(error) => {
+                log::error!("Error occured while received event: {}", error);
+                panic!();
             }
         };
 
         let event_direction = event.dir;
         self.fsm.push_event(event);
 
+        // Handling event based on it's direction
         match event_direction {
-            0 => self.fsm.transition(2)?,
-            1 => self.fsm.transition(3)?,
+            // incoming
+            0 => {
+                log::debug!("Received `incoming` event");
+
+                self.fsm.transition(2)?;
+            },
+            // outcoming
+            1 => {
+                log::debug!("Received `outcoming` event");
+
+                self.fsm.transition(3)?;
+            },
             _ => {
-                todo!("Properly log the error");
+                log::warn!("Received event with the unknown direction");
             }
         }
 
@@ -137,31 +167,39 @@ impl Server {
     }
 
     fn handle_incoming_event(&mut self) -> Result<(), ServerError> {
+        log::debug!("State `handle_incoming_event`");
+
         let event = self.fsm.pop_event().unwrap();
 
+        // If we got new event from `listener` thread
         if event.kind == proto_msg::event::Kind::NewStreamEvent as i32 {
+            // Parsing fd from the event
             let bytes = event.data.get(0).unwrap();
             let fd = utils::i32_from_ne_bytes_vec(bytes.to_vec()).unwrap();
 
+            // If it's a fd of a server, than accept new client
             if let Some(listener) = self.servers.get(&fd) {
                 match listener.accept() {
-                    Ok((stream, _addr)) => {
-                        // Log new connection
+                    Ok((stream, addr)) => {
+                        log::info!("New client connected {}", addr);
+
                         self.clients.insert(fd, stream);
 
+                        // Notify `listener` thread about new client
                         self.listener_event_channel_tx.send(proto_msg::Event {
                             dir: proto_msg::event::Direction::Internal as i32,
                             kind: proto_msg::event::Kind::NewFd as i32,
                             data: vec![fd.to_ne_bytes().to_vec()]
                         }).unwrap();
                     },
-                    Err(_) => {
-                        todo!("Properly log the error");
+                    Err(error) => {
+                        log::warn!("Couldn't connect new client: {}", error);
                     }
                 };
             }
         }
 
+        // Send an event to main
         self.main_event_channel_tx.send(event).unwrap();
 
         self.fsm.transition(1)?;
@@ -169,13 +207,15 @@ impl Server {
     }
 
     fn handle_outcoming_event(&mut self) -> Result<(), ServerError> {
-        println!("Sending an outcoming event");
+        log::debug!("State `handle_outcoming_event`");
 
         self.fsm.transition(1)?;
         Ok(())
     }
 
     fn stop(self) -> Result<(), ServerError> {
+        log::debug!("State `stop`");
+
         match self.listener_handle.join() {
             Ok(_) => Ok(()),
             Err(_) => Err(ServerError::InternalError)
@@ -184,9 +224,12 @@ impl Server {
 
     fn t_listener(listener_rx: mpsc::Receiver<proto_msg::Event>,
                   server_tx: mpsc::Sender<proto_msg::Event>) {
+        log::debug!("Listener thread started");
+
         let mut readfds_vec = vec![];
 
         loop {
+            // Wait for events from other thread
             let mut incoming_events: Vec<proto_msg::Event> = vec![];
             loop {
                 let timeout = time::Duration::from_millis(100);
@@ -198,6 +241,7 @@ impl Server {
                 }
             }
 
+            // Handle received events
             for event in incoming_events {
                 if event.kind == proto_msg::event::Kind::NewFd as i32 {
                     let bytes = event.data.get(0).unwrap();
@@ -206,23 +250,20 @@ impl Server {
                 }
             }
 
+            // Update set of fds to be read
             let mut readfds = FdSet::new();
             for fd in readfds_vec.iter() {
                 readfds.insert(*fd);
             }
 
+            // Wait for acitivy on specified fds
             let mut timeout = TimeVal::milliseconds(100);
             let result = select(None, &mut readfds, None, None, &mut timeout);
-            match result {
-                Ok(ready_count) => {
-                    // log ready count
-                    ready_count
-                },
-                Err(_) => {
-                    todo!("Properly log the error");
-                }
-            };
+            if result.is_err() {
+                log::warn!("`select` exited with error: {:?}", result.err());
+            }
 
+            // Send events to the handler
             for fd in readfds.fds(None) {
                 let event = proto_msg::Event {
                     dir: proto_msg::event::Direction::Internal as i32,
