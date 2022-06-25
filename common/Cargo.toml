@@ -3,6 +3,9 @@ name = "common"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies.pnet]
-version = "*"
-features = ["std"]
+[dependencies]
+prost = "*"
+pnet = { version = "*", features = ["std"] }
+
+[build-dependencies]
+prost-build = "*"

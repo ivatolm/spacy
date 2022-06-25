@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package common.event;
+
+message Event {
+    enum Direction {
+        INTERNAL = 0;
+        INCOMING = 1;
+        OUTCOMING = 2;
+    }
+
+    enum Kind {
+        NEW_STREAM_EVENT = 0;
+        NEW_FD = 1;
+        ADD_PLUGIN = 2;
+    }
+
+    Direction dir = 1;
+    Kind kind = 2;
+    repeated bytes data = 3;
+}

@@ -1,0 +1,6 @@
+fn main() {
+    prost_build::compile_protos(
+        &["src/protobuf/event.proto"],
+        &["src"]
+    ).unwrap();
+}

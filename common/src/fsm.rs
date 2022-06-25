@@ -1,8 +1,9 @@
 use std::collections::{LinkedList, HashMap};
+use crate::event::proto_msg;
 
 pub struct FSM {
     pub state: u8,
-    queue: LinkedList<u8>,
+    queue: LinkedList<proto_msg::Event>,
     transition_table: HashMap<u8, Vec<u8>>
 }
 
@@ -30,11 +31,11 @@ impl FSM {
         Err(FSMError::TransitionError)
     }
 
-    pub fn push_event(&mut self, event: u8) {
+    pub fn push_event(&mut self, event: proto_msg::Event) {
         self.queue.push_back(event);
     }
 
-    pub fn pop_event(&mut self) -> Option<u8> {
+    pub fn pop_event(&mut self) -> Option<proto_msg::Event> {
         self.queue.pop_front()
     }
 }
