@@ -23,6 +23,6 @@ pub fn get_networks_and_masks() -> Vec<(std::net::IpAddr, std::net::IpAddr)> {
         .collect()
 }
 
-pub fn i32_from_ne_bytes_vec(bytes: Vec<u8>) -> Result<i32, std::array::TryFromSliceError> {
+pub fn i32_from_ne_bytes(bytes: &[u8]) -> Result<i32, std::array::TryFromSliceError> {
     Ok(i32::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
 }

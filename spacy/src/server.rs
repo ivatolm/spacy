@@ -175,7 +175,7 @@ impl Server {
         if event.kind == proto_msg::event::Kind::NewStreamEvent as i32 {
             // Parsing fd from the event
             let bytes = event.data.get(0).unwrap();
-            let fd = utils::i32_from_ne_bytes_vec(bytes.to_vec()).unwrap();
+            let fd = utils::i32_from_ne_bytes(bytes).unwrap();
 
             // If it's a fd of a server, than accept new client
             if let Some(listener) = self.servers.get(&fd) {
@@ -245,7 +245,7 @@ impl Server {
             for event in incoming_events {
                 if event.kind == proto_msg::event::Kind::NewFd as i32 {
                     let bytes = event.data.get(0).unwrap();
-                    let fd = utils::i32_from_ne_bytes_vec(bytes.to_vec()).unwrap();
+                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
                     readfds_vec.push(fd);
                 }
             }
