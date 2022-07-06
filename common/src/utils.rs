@@ -23,6 +23,13 @@ pub fn get_networks_and_masks() -> Vec<(std::net::IpAddr, std::net::IpAddr)> {
         .collect()
 }
 
+pub fn get_octets(address: &std::net::IpAddr) -> Result<[u8; 4], std::net::AddrParseError> {
+    let address_string = address.to_string();
+    let address_ipv4 = address_string.parse::<std::net::Ipv4Addr>()?;
+    let octets = address_ipv4.octets();
+    Ok(octets)
+}
+
 pub fn i32_from_ne_bytes(bytes: &[u8]) -> Result<i32, std::array::TryFromSliceError> {
     Ok(i32::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
 }

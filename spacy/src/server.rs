@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, IpAddr, Ipv4Addr, SocketAddr},
     os::unix::prelude::AsRawFd,
     sync::mpsc,
     thread,
@@ -20,10 +20,12 @@ pub struct Server {
     fsm: FSM,
     event_channel_tx: mpsc::Sender<proto_msg::Event>,
     event_channel_rx: mpsc::Receiver<proto_msg::Event>,
+    stream_channel_rx: mpsc::Receiver<TcpStream>,
     servers: HashMap<i32, TcpListener>,
     clients: HashMap<i32, TcpStream>,
     listener_event_channel_tx: mpsc::Sender<proto_msg::Event>,
     listener_handle: thread::JoinHandle<()>,
+    scanner_handle: thread::JoinHandle<()>,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
@@ -60,14 +62,25 @@ impl Server {
             Self::t_listener(listener_event_channel_rx, server_event_channel_tx);
         });
 
+		// Creating communication channel with `scanner`
+		let (scanner_stream_channel_tx, stream_channel_rx) = mpsc::channel();
+        let server_event_channel_tx = event_channel_tx.clone();
+
+		// Spawning `scanner`
+		let scanner_handle = thread::spawn(move || {
+			Self::t_scanner(server_event_channel_tx, scanner_stream_channel_tx);
+		});
+
         Self {
             fsm,
             event_channel_tx,
             event_channel_rx,
+			stream_channel_rx,
             servers: HashMap::new(),
             clients: HashMap::new(),
             listener_event_channel_tx,
             listener_handle,
+			scanner_handle,
 
             main_event_channel_tx
         }
@@ -145,23 +158,21 @@ impl Server {
         self.fsm.push_event(event);
 
         // Handling event based on it's direction
-        match event_direction {
-            // incoming
-            0 => {
-                log::debug!("Received `incoming` event");
+        if event_direction == proto_msg::event::Direction::Incoming as i32 {
+            log::debug!("Received `incoming` event");
 
-                self.fsm.transition(2)?;
-            },
-            // outcoming
-            1 => {
-                log::debug!("Received `outcoming` event");
-
-                self.fsm.transition(3)?;
-            },
-            _ => {
-                log::warn!("Received event with the unknown direction");
-            }
+            self.fsm.transition(2)?;
+            return Ok(());
         }
+
+        if event_direction == proto_msg::event::Direction::Outcoming as i32 {
+            log::debug!("Received `outcoming` event");
+
+            self.fsm.transition(3)?;
+            return Ok(());
+        }
+
+        log::warn!("Received event with the unknown direction");
 
         Ok(())
     }
@@ -199,6 +210,25 @@ impl Server {
             }
         }
 
+        // If we got new event from `scanner` thread
+        if event.kind == proto_msg::event::Kind::NewStream as i32 {
+            log::debug!("Scanner found new client");
+            // Reading sent stream and adding it to the list of clients
+            let stream = self.stream_channel_rx.recv().unwrap();
+            let addr = stream.local_addr().unwrap();
+            log::info!("New client connected {}", addr);
+
+            let fd = stream.as_raw_fd();
+            self.clients.insert(fd, stream);
+
+            // Notify `listener` thread about new client
+            self.listener_event_channel_tx.send(proto_msg::Event {
+                dir: proto_msg::event::Direction::Internal as i32,
+                kind: proto_msg::event::Kind::NewFd as i32,
+                data: vec![fd.to_ne_bytes().to_vec()]
+            }).unwrap();
+        }
+
         // Send an event to main
         self.main_event_channel_tx.send(event).unwrap();
 
@@ -219,7 +249,14 @@ impl Server {
         match self.listener_handle.join() {
             Ok(_) => Ok(()),
             Err(_) => Err(ServerError::InternalError)
-        }
+        }?;
+
+        match self.scanner_handle.join() {
+            Ok(_) => Ok(()),
+            Err(_) => Err(ServerError::InternalError)
+        }?;
+
+        Ok(())
     }
 
     fn t_listener(listener_rx: mpsc::Receiver<proto_msg::Event>,
@@ -266,12 +303,63 @@ impl Server {
             // Send events to the handler
             for fd in readfds.fds(None) {
                 let event = proto_msg::Event {
-                    dir: proto_msg::event::Direction::Internal as i32,
+                    dir: proto_msg::event::Direction::Incoming as i32,
                     kind: proto_msg::event::Kind::NewStreamEvent as i32,
                     data: vec![fd.to_ne_bytes().to_vec()]
                 };
 
                 server_tx.send(event).unwrap();
+            }
+        }
+    }
+
+    fn t_scanner(server_event_tx: mpsc::Sender<proto_msg::Event>,
+				 server_stream_tx: mpsc::Sender<TcpStream>) {
+
+        // Get this machine ips (to not ping them)
+        let local_ips = utils::get_ipv4_ips();
+
+        // Get proper interfaces
+        for (network, _mask) in utils::get_networks_and_masks().iter() {
+            // Get octets of networks
+            if !network.is_ipv4() {
+                continue;
+            }
+
+            // TODO: Add proper check
+            let octets = utils::get_octets(network).unwrap();
+
+            // Ping all avaliable IPs (not really, but OK for MVP)
+            for i in 0..255 {
+                let ip = IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], i));
+
+                // We dont want to ping ourselves
+                if local_ips.contains(&ip) {
+                    // continue;
+                }
+
+                // TODO: 32001 -> 32000. Only for one-machine testing
+                let socket_address = SocketAddr::new(ip, 32001);
+                let stream = TcpStream::connect_timeout(
+                    &socket_address,
+                    time::Duration::from_millis(100)
+                );
+
+                match stream {
+                    Ok(stream) => {
+                        // Send stream of client that responded
+						server_stream_tx.send(stream).unwrap();
+						// Notify server, that new client detected
+						server_event_tx.send(proto_msg::Event {
+							dir: proto_msg::event::Direction::Incoming as i32,
+							kind: proto_msg::event::Kind::NewStream as i32,
+							data: vec![]
+						}).unwrap();
+                    },
+                    Err(_) => {
+                        // Doing nothing, this situation is perfectly OK
+                    }
+                }
             }
         }
     }

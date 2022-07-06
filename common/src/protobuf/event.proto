@@ -10,9 +10,10 @@ message Event {
     }
 
     enum Kind {
-        NEW_STREAM_EVENT = 0;
-        NEW_FD = 1;
-        ADD_PLUGIN = 2;
+        NEW_STREAM = 0;
+        NEW_STREAM_EVENT = 1;
+        NEW_FD = 2;
+        ADD_PLUGIN = 3;
     }
 
     Direction dir = 1;

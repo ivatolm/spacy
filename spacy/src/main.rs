@@ -14,11 +14,6 @@ fn main() {
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    let ips = utils::get_ipv4_ips();
-    let local_ip = ips.get(0).unwrap();
-    let stream = TcpStream::connect((*local_ip, 32000));
-    stream.unwrap();
-
     match server_handle.join() {
         Ok(_) => {},
         Err(_) => {}
