@@ -1,18 +1,22 @@
+mod node;
 mod server;
 
+use node::Node;
 use server::Server;
-use std::{sync::mpsc, net::TcpStream};
-use common::utils;
+use std::sync::mpsc;
 
 fn main() {
     env_logger::init();
 
     let (main_event_channel_tx, _main_event_channel_rx) = mpsc::channel();
 
-    let server = Server::new(main_event_channel_tx);
-    let (_server_event_channel_tx, server_handle) = server.start();
+    let main_event_channel_tx_clone = main_event_channel_tx.clone();
+    let mut node = Node::new(main_event_channel_tx_clone);
+    let _node_event_channel_tx = node.start();
 
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    let main_event_channel_tx_clone = main_event_channel_tx.clone();
+    let server = Server::new(main_event_channel_tx_clone);
+    let (_server_event_channel_tx, server_handle) = server.start();
 
     match server_handle.join() {
         Ok(_) => {},
