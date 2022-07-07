@@ -1,18 +1,18 @@
 use std::{
     collections::HashMap,
-    net::{TcpListener, TcpStream, IpAddr, Ipv4Addr, SocketAddr},
+    net::{TcpListener, TcpStream, IpAddr, Ipv4Addr, SocketAddr, Shutdown},
     os::unix::prelude::AsRawFd,
     sync::mpsc,
     thread,
-    time
+    time, io::Read
 };
-use nix::sys::{
+use nix::{sys::{
     select::{select, FdSet},
     time::{TimeVal, TimeValLike}
-};
+}, unistd::read};
 use common::{
     fsm::{FSM, FSMError},
-    event::proto_msg,
+    event::{proto_msg, self},
     utils
 };
 
@@ -23,6 +23,7 @@ pub struct Server {
     stream_channel_rx: mpsc::Receiver<TcpStream>,
     servers: HashMap<i32, TcpListener>,
     clients: HashMap<i32, TcpStream>,
+    nodes: HashMap<i32, TcpStream>,
     listener_event_channel_tx: mpsc::Sender<proto_msg::Event>,
     listener_handle: thread::JoinHandle<()>,
     scanner_handle: thread::JoinHandle<()>,
@@ -78,6 +79,7 @@ impl Server {
 			stream_channel_rx,
             servers: HashMap::new(),
             clients: HashMap::new(),
+            nodes: HashMap::new(),
             listener_event_channel_tx,
             listener_handle,
 			scanner_handle,
@@ -181,6 +183,7 @@ impl Server {
         log::debug!("State `handle_incoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
+        let mut event_to_main = None;
 
         // If we got new event from `listener` thread
         if event.kind == proto_msg::event::Kind::NewStreamEvent as i32 {
@@ -194,13 +197,14 @@ impl Server {
                     Ok((stream, addr)) => {
                         log::info!("New client connected {}", addr);
 
-                        self.clients.insert(fd, stream);
+                        let client_fd = stream.as_raw_fd();
+                        self.clients.insert(client_fd, stream);
 
                         // Notify `listener` thread about new client
                         self.listener_event_channel_tx.send(proto_msg::Event {
                             dir: proto_msg::event::Direction::Internal as i32,
                             kind: proto_msg::event::Kind::NewFd as i32,
-                            data: vec![fd.to_ne_bytes().to_vec()]
+                            data: vec![client_fd.to_ne_bytes().to_vec()]
                         }).unwrap();
                     },
                     Err(error) => {
@@ -208,18 +212,63 @@ impl Server {
                     }
                 };
             }
+
+            // If it's a fd of a client, that read from stream
+            if let Some(mut stream) = self.clients.get(&fd) {
+                let mut message = vec![];
+
+                // Reading stream until read
+                let mut buf = [0u8; 1024];
+                loop {
+                    let bytes_num = stream.read(&mut buf).unwrap();
+                    message.extend(&buf[0..bytes_num]);
+
+                    if bytes_num < 1024 {
+                        break;
+                    }
+
+                    buf = [0u8; 1024];
+                }
+
+
+                // If we read zero bytes, in TCP it means that client disconnected
+                // else we just have got a new event from the client
+                if message.len() == 0 {
+                    let client_fd = fd;
+
+                    log::info!("Client disconnected {}", stream.peer_addr().unwrap());
+
+                    // Shutting down the stream
+                    stream.shutdown(Shutdown::Both).unwrap();
+
+                    // Removing client from client-list
+                    self.clients.remove(&client_fd);
+
+                    // Notify `listener` thread about old client
+                    self.listener_event_channel_tx.send(proto_msg::Event {
+                        dir: proto_msg::event::Direction::Internal as i32,
+                        kind: proto_msg::event::Kind::OldFd as i32,
+                        data: vec![client_fd.to_ne_bytes().to_vec()]
+                    }).unwrap();
+                } else {
+                    log::info!("Received new {}-bytes message from the client", message.len());
+
+                    // Setting up an event to be sent to main
+                    event_to_main = Some(event::deserialize(&message).unwrap());
+                }
+            }
         }
 
         // If we got new event from `scanner` thread
         if event.kind == proto_msg::event::Kind::NewStream as i32 {
-            log::debug!("Scanner found new client");
-            // Reading sent stream and adding it to the list of clients
+            log::debug!("Scanner found new node");
+            // Reading sent stream and adding it to the list of nodes
             let stream = self.stream_channel_rx.recv().unwrap();
-            let addr = stream.local_addr().unwrap();
-            log::info!("New client connected {}", addr);
+            let addr = stream.peer_addr().unwrap();
+            log::info!("New node connected {}", addr);
 
             let fd = stream.as_raw_fd();
-            self.clients.insert(fd, stream);
+            self.nodes.insert(fd, stream);
 
             // Notify `listener` thread about new client
             self.listener_event_channel_tx.send(proto_msg::Event {
@@ -230,7 +279,9 @@ impl Server {
         }
 
         // Send an event to main
-        self.main_event_channel_tx.send(event).unwrap();
+        if let Some(event) = event_to_main {
+            self.main_event_channel_tx.send(event).unwrap();
+        }
 
         self.fsm.transition(1)?;
         Ok(())
@@ -285,6 +336,20 @@ impl Server {
                     let fd = utils::i32_from_ne_bytes(bytes).unwrap();
                     readfds_vec.push(fd);
                 }
+
+                if event.kind == proto_msg::event::Kind::OldFd as i32 {
+                    let bytes = event.data.get(0).unwrap();
+                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
+
+                    let mut fd_index = 0;
+                    for i in 0..readfds_vec.len() {
+                        if *readfds_vec.get(i).unwrap() == fd {
+                            fd_index = i;
+                            break;
+                        }
+                    }
+                    readfds_vec.remove(fd_index);
+                }
             }
 
             // Update set of fds to be read
@@ -335,6 +400,7 @@ impl Server {
 
                 // We dont want to ping ourselves
                 if local_ips.contains(&ip) {
+                    // TODO: remove comment. Only for one-machine testing
                     // continue;
                 }
 

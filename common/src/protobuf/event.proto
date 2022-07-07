@@ -13,7 +13,10 @@ message Event {
         NEW_STREAM = 0;
         NEW_STREAM_EVENT = 1;
         NEW_FD = 2;
-        UPDATE_SHARED_MEMORY = 3;
+        OLD_FD = 3;
+        NEW_CLIENT_EVENT = 4;
+        NEW_PLUGIN = 5;
+        UPDATE_SHARED_MEMORY = 6;
     }
 
     Direction dir = 1;
