@@ -10,11 +10,12 @@ use std::{
     thread,
     time
 };
+use common::event::proto_msg;
 
 fn main() {
     env_logger::init();
 
-    let (main_event_channel_tx, _main_event_channel_rx) = mpsc::channel();
+    let (main_event_channel_tx, main_event_channel_rx) = mpsc::channel();
 
     let main_event_channel_tx_clone = main_event_channel_tx.clone();
     let mut node = Node::new(main_event_channel_tx_clone);
@@ -26,9 +27,19 @@ fn main() {
 
     let main_event_channel_tx_clone = main_event_channel_tx.clone();
     let mut plugin_man = PluginMan::new(main_event_channel_tx_clone);
-    let _plugin_man_event_channel_tx = plugin_man.start();
+    let plugin_man_event_channel_tx = plugin_man.start();
 
     loop {
+        let event_res = main_event_channel_rx.try_recv();
+        if let Ok(event) = event_res {
+            if event.kind == proto_msg::event::Kind::NewPlugin as i32 {
+                log::info!("Client requested to start a new plugin");
+
+                // Sending an event to plugin manager
+                plugin_man_event_channel_tx.send(event).unwrap();
+            }
+        }
+
         match node.step() {
             Ok(_) => {}
             Err(_) => {
@@ -39,7 +50,7 @@ fn main() {
 
         plugin_man.step().unwrap();
 
-        thread::sleep(time::Duration::from_millis(100));
+        thread::sleep(time::Duration::from_secs(5));
     }
 
     // match server_handle.join() {

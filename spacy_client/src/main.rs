@@ -1,14 +1,21 @@
-use std::{net::TcpStream, io::Write};
-
-use common::event::{proto_msg, self};
+use std::{
+    net::TcpStream,
+    io::Write,
+    fs
+};
+use common::event::{
+    self,
+    proto_msg
+};
 
 fn main() {
     // Testing only
 
+    let content = fs::read_to_string("plugins/basic.py").unwrap();
     let event = proto_msg::Event {
         dir: proto_msg::event::Direction::Incoming as i32,
         kind: proto_msg::event::Kind::NewPlugin as i32,
-        data: vec![vec![123]]
+        data: vec![content.as_bytes().to_vec()]
     };
 
     let msg = event::serialize(event);

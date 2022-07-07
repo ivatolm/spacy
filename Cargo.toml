@@ -1,2 +1,2 @@
 [workspace]
-members = ["common", "spacy", "spacy-client"]
+members = ["common", "spacy", "spacy_plugin", "spacy_client"]
