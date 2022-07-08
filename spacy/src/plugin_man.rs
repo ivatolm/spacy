@@ -2,11 +2,15 @@ use std::{
     collections::HashMap,
     sync::mpsc,
     process::Command,
-    net::{TcpListener, TcpStream}
+    net::{TcpListener, TcpStream, Shutdown}, os::unix::prelude::{AsRawFd, FromRawFd}, io::Read
 };
 use common::{
     fsm::{FSM, FSMError},
-    event::proto_msg
+    event::{proto_msg, self}
+};
+use nix::sys::{
+    select::{select, FdSet},
+    time::{TimeVal, TimeValLike}
 };
 
 pub struct PluginMan {
@@ -14,7 +18,8 @@ pub struct PluginMan {
     event_channel_tx: mpsc::Sender<proto_msg::Event>,
     event_channel_rx: mpsc::Receiver<proto_msg::Event>,
     listener: TcpListener,
-    plugins: HashMap<u32, TcpStream>,
+    plugins: HashMap<u32, i32>,
+    plugins_streams: HashMap<i32, TcpStream>,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
@@ -27,17 +32,19 @@ pub enum PluginManError {
 impl PluginMan {
     // 0 - initialization
     // 1 - waiting for events
-    // 2 - handle incoming event
-    // 3 - handle outcoming event
-    // 4 - stop
+    // 2 - handle event
+    // 3 - handle incoming event
+    // 4 - handle outcoming event
+    // 5 - stop
 
     pub fn new(main_event_channel_tx: mpsc::Sender<proto_msg::Event>) -> Self {
         let fsm = FSM::new(0, HashMap::from([
-            (0, vec![1, 4]),
-            (1, vec![2, 3, 4]),
-            (2, vec![1, 4]),
-            (3, vec![1, 4]),
-            (4, vec![])
+            (0, vec![1, 5]),
+            (1, vec![2, 5]),
+            (2, vec![1, 3, 4, 5]),
+            (3, vec![2, 5]),
+            (4, vec![2, 5]),
+            (5, vec![])
         ]));
 
         // Creating main event communication channel
@@ -52,6 +59,7 @@ impl PluginMan {
             event_channel_rx,
             listener,
             plugins: HashMap::new(),
+            plugins_streams: HashMap::new(),
 
             main_event_channel_tx
         }
@@ -67,9 +75,10 @@ impl PluginMan {
         match self.fsm.state {
             0 => self.init(),
             1 => self.wait_event(),
-            2 => self.handle_incoming_event(),
-            3 => self.handle_outcoming_event(),
-            4 => {
+            2 => self.handle_event(),
+            3 => self.handle_incoming_event(),
+            4 => self.handle_outcoming_event(),
+            5 => {
                 self.stop()?;
                 return Ok(());
             }
@@ -80,7 +89,6 @@ impl PluginMan {
     fn init(&mut self) -> Result<(), PluginManError> {
         log::debug!("State `init`");
 
-
         self.fsm.transition(1)?;
         Ok(())
     }
@@ -88,16 +96,85 @@ impl PluginMan {
     fn wait_event(&mut self) -> Result<(), PluginManError> {
         log::debug!("State `wait_event`");
 
-        let event = match self.event_channel_rx.try_recv() {
-            Ok(event) => event,
-            Err(_) => {
+        // Checking if there anything to read
+        match self.event_channel_rx.try_recv() {
+            Ok(event) => {
+                self.fsm.push_event(event);
+            },
+            Err(_) => {}
+        }
+
+        let mut readfds = FdSet::new();
+        for fd in self.plugins.values() {
+            readfds.insert(*fd);
+        }
+
+        let mut timeout = TimeVal::milliseconds(10);
+        let result = select(None, &mut readfds, None, None, &mut timeout);
+        if result.is_err() {
+            return Ok(());
+        }
+
+        for fd in readfds.fds(None) {
+            let mut stream = self.plugins_streams.get(&fd).unwrap();
+
+            // Reading message until read
+            let mut message = vec![];
+            let mut buf = [0u8; 1024];
+            loop {
+                let bytes_num = stream.read(&mut buf).unwrap();
+                message.extend(&buf[0..bytes_num]);
+
+                if bytes_num < 1024 {
+                    break;
+                }
+
+                buf = [0u8; 1024];
+            }
+
+            // If plugin manager disconnected
+            if message.len() == 0 {
+                stream.shutdown(Shutdown::Both).unwrap();
+            } else {
+                let event = event::deserialize(&message).unwrap();
+                self.fsm.push_event(event);
+            }
+        }
+
+        self.fsm.transition(2)?;
+        Ok(())
+    }
+
+    fn handle_event(&mut self) -> Result<(), PluginManError> {
+        log::debug!("State `handle_event`");
+
+        let event = match self.fsm.pop_event() {
+            Some(event) => event,
+            None => {
+                self.fsm.transition(1)?;
                 return Ok(());
             }
         };
-
+        let event_direction = event.dir;
         self.fsm.push_event(event);
 
-        self.fsm.transition(2)?;
+        // Handling event based on it's direction
+        if event_direction == proto_msg::event::Direction::Incoming as i32 {
+            log::debug!("Received `incoming` event");
+
+            self.fsm.transition(3)?;
+            return Ok(());
+        }
+
+        if event_direction == proto_msg::event::Direction::Outcoming as i32 {
+            log::debug!("Received `outcoming` event");
+
+            self.fsm.transition(4)?;
+            return Ok(());
+        }
+
+        log::warn!("Received event with the unknown direction");
+
         Ok(())
     }
 
@@ -122,7 +199,7 @@ impl PluginMan {
                     log::warn!("Error occured while starting a plugin: {}", err);
                     // TODO: Notify client about failure
 
-                    self.fsm.transition(1)?;
+                    self.fsm.transition(2)?;
                     return Ok(());
                 }
             };
@@ -134,17 +211,18 @@ impl PluginMan {
                     log::warn!("Error occured while accepting plugin's connection: {}", err);
                     child.kill().unwrap();
 
-                    self.fsm.transition(1)?;
+                    self.fsm.transition(2)?;
                     return Ok(());
                 }
             };
 
-            self.plugins.insert(child.id(), stream);
+            self.plugins.insert(child.id(), stream.as_raw_fd());
+            self.plugins_streams.insert(stream.as_raw_fd(), stream);
 
             log::info!("New plugin started");
         }
 
-        self.fsm.transition(1)?;
+        self.fsm.transition(2)?;
         Ok(())
     }
 
@@ -152,8 +230,21 @@ impl PluginMan {
         log::debug!("State `handle_outcoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
+        let mut event_to_main = None;
 
-        self.fsm.transition(1)?;
+        if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+            event_to_main = Some(proto_msg::Event {
+                dir: proto_msg::event::Direction::Outcoming as i32,
+                kind: proto_msg::event::Kind::NewNodeEvent as i32,
+                data: vec![event::serialize(event)]
+            });
+        }
+
+        if let Some(event) = event_to_main {
+            self.main_event_channel_tx.send(event).unwrap();
+        }
+
+        self.fsm.transition(2)?;
         Ok(())
     }
 

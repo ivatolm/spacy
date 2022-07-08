@@ -10,7 +10,7 @@ use std::{
     thread,
     time
 };
-use common::event::proto_msg;
+use common::event::{self, proto_msg};
 
 fn main() {
     env_logger::init();
@@ -19,7 +19,7 @@ fn main() {
 
     let main_event_channel_tx_clone = main_event_channel_tx.clone();
     let mut node = Node::new(main_event_channel_tx_clone);
-    let _node_event_channel_tx = node.start();
+    let node_event_channel_tx = node.start();
 
     let main_event_channel_tx_clone = main_event_channel_tx.clone();
     let server = Server::new(main_event_channel_tx_clone);
@@ -38,16 +38,18 @@ fn main() {
                 // Sending an event to plugin manager
                 plugin_man_event_channel_tx.send(event).unwrap();
             }
-        }
 
-        match node.step() {
-            Ok(_) => {}
-            Err(_) => {
-                log::error!("Error occured while updating `node`");
-                panic!();
+            else if event.kind == proto_msg::event::Kind::NewNodeEvent as i32 {
+                log::info!("Node has got new event");
+
+                // Sending an event to node
+                let first_arg = event.data.get(0).unwrap();
+                let actual_event = event::deserialize(first_arg).unwrap();
+                node_event_channel_tx.send(actual_event).unwrap();
             }
         }
 
+        node.step().unwrap();
         plugin_man.step().unwrap();
 
         thread::sleep(time::Duration::from_secs(5));

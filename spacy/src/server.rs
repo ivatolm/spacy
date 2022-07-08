@@ -6,10 +6,10 @@ use std::{
     thread,
     time, io::Read
 };
-use nix::{sys::{
+use nix::sys::{
     select::{select, FdSet},
     time::{TimeVal, TimeValLike}
-}, unistd::read};
+};
 use common::{
     fsm::{FSM, FSMError},
     event::{proto_msg, self},

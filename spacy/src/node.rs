@@ -18,6 +18,7 @@ pub struct Node {
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
 
+#[derive(Debug)]
 pub enum NodeError {
     InternalError
 }
@@ -67,6 +68,11 @@ impl Node {
             0 => self.init(),
             1 => self.wait_event(),
             2 => self.handle_incoming_event(),
+            3 => self.handle_outcoming_event(),
+            4 => {
+                self.stop()?;
+                return Ok(());
+            },
             _ => unreachable!()
         }
     }
@@ -83,11 +89,10 @@ impl Node {
     fn wait_event(&mut self) -> Result<(), NodeError> {
         log::debug!("State `wait_event`");
 
-        let event = match self.event_channel_rx.recv() {
+        let event = match self.event_channel_rx.try_recv() {
             Ok(event) => event,
-            Err(err) => {
-                log::error!("Error occured while receiving event: {}", err);
-                panic!();
+            Err(_) => {
+                return Ok(());
             }
         };
 
@@ -101,6 +106,12 @@ impl Node {
             self.fsm.transition(2)?;
         }
 
+        if event_direction == proto_msg::event::Direction::Outcoming as i32 {
+            log::debug!("Received `outcoming` event");
+
+            self.fsm.transition(3)?;
+        }
+
         Ok(())
     }
 
@@ -111,15 +122,31 @@ impl Node {
 
         // Receive new version and update
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+            // [ version, var_0, kind_0, value_0, ... ]
             let bytes = event.data.get(0).unwrap();
             let version = utils::i32_from_ne_bytes(bytes).unwrap();
 
             if version > self.shared_memory_version {
                 // Updating local shared memory
-                log::debug!("Shared memory update contains {} diffs with local", event.data.len() / 3);
+                log::debug!("Syncronizing shared memory...");
+                let updates_num = (event.data.len() - 1) / 3;
+
+                for i in 0..updates_num {
+                    let block = i * 3;
+                    let var_bytes = event.data.get(block + 0).unwrap();
+                    let kind_bytes = event.data.get(block + 1).unwrap();
+                    let value_bytes = event.data.get(block + 2).unwrap();
+
+                    let var = utils::u8_from_ne_bytes(var_bytes).unwrap();
+                    let kind = utils::u8_from_ne_bytes(kind_bytes).unwrap();
+                    let value = value_bytes;
+
+                    log::debug!("{}: {} = {:?}", var, kind, value);
+                }
             }
         }
 
+        self.fsm.transition(1)?;
         Ok(())
     }
 
@@ -133,10 +160,11 @@ impl Node {
             log::debug!("Broadcasting shared memory update");
         }
 
+        self.fsm.transition(1)?;
         Ok(())
     }
 
-    fn stop(self) -> Result<(), NodeError> {
+    fn stop(&mut self) -> Result<(), NodeError> {
         log::debug!("State `stop`");
 
         Ok(())

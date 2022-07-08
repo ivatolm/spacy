@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 [dependencies]
 common = { path = "../common" }
 pyo3 = { version = "*", features = ["extension-module"] }
+nix = "*"
