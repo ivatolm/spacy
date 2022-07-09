@@ -131,7 +131,8 @@ impl Server {
                         dir: None,
                         dest: None,
                         kind: proto_msg::event::Kind::NewFd as i32,
-                        data: vec![fd.to_ne_bytes().to_vec()]
+                        data: vec![fd.to_ne_bytes().to_vec()],
+                        meta: vec![]
                     };
                     self.listener_event_channel_tx.send(event).unwrap();
                 },
@@ -187,7 +188,7 @@ impl Server {
         log::debug!("State `handle_incoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
-        let mut event_to_main = None;
+        let mut events_to_main = vec![];
 
         // If we got new event from `listener` thread
         if event.kind == proto_msg::event::Kind::NewStreamEvent as i32 {
@@ -209,7 +210,8 @@ impl Server {
                             dir: None,
                             dest: None,
                             kind: proto_msg::event::Kind::NewFd as i32,
-                            data: vec![client_fd.to_ne_bytes().to_vec()]
+                            data: vec![client_fd.to_ne_bytes().to_vec()],
+                            meta: vec![]
                         }).unwrap();
                     },
                     Err(error) => {
@@ -241,29 +243,32 @@ impl Server {
                         dir: None,
                         dest: None,
                         kind: proto_msg::event::Kind::OldFd as i32,
-                        data: vec![client_fd.to_ne_bytes().to_vec()]
+                        data: vec![client_fd.to_ne_bytes().to_vec()],
+                        meta: vec![]
                     }).unwrap();
                 } else {
                     log::info!("Received new {}-bytes message from the client", message.len());
 
                     // Setting up an event to be sent to main
-                    let event = event::deserialize(&message).unwrap();
+                    let events = event::deserialize(&message).unwrap();
+                    for event in events {
+                        let dest;
+                        if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+                            dest = Some(proto_msg::event::Dest::Node as i32);
+                        } else {
+                            dest = Some(proto_msg::event::Dest::PluginMan as i32);
+                        }
 
-                    let dest;
-                    if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-                        dest = Some(proto_msg::event::Dest::Node as i32);
-                    } else {
-                        dest = Some(proto_msg::event::Dest::PluginMan as i32);
+                        let event = proto_msg::Event {
+                            dir: Some(proto_msg::event::Dir::Incoming as i32),
+                            dest,
+                            kind: event.kind,
+                            data: event.data,
+                            meta: vec![]
+                        };
+
+                        events_to_main.push(event);
                     }
-
-                    let event = proto_msg::Event {
-                        dir: Some(proto_msg::event::Dir::Incoming as i32),
-                        dest,
-                        kind: event.kind,
-                        data: event.data
-                    };
-
-                    event_to_main = Some(event);
                 }
             }
         }
@@ -284,12 +289,13 @@ impl Server {
                 dir: None,
                 dest: None,
                 kind: proto_msg::event::Kind::NewFd as i32,
-                data: vec![fd.to_ne_bytes().to_vec()]
+                data: vec![fd.to_ne_bytes().to_vec()],
+                meta: vec![]
             }).unwrap();
         }
 
         // Send an event to main
-        if let Some(event) = event_to_main {
+        for event in events_to_main {
             self.main_event_channel_tx.send(event).unwrap();
         }
 
@@ -392,7 +398,8 @@ impl Server {
                     dir: Some(proto_msg::event::Dir::Incoming as i32),
                     dest: None,
                     kind: proto_msg::event::Kind::NewStreamEvent as i32,
-                    data: vec![fd.to_ne_bytes().to_vec()]
+                    data: vec![fd.to_ne_bytes().to_vec()],
+                    meta: vec![]
                 };
 
                 server_tx.send(event).unwrap();
@@ -442,7 +449,8 @@ impl Server {
 							dir: Some(proto_msg::event::Dir::Incoming as i32),
                             dest: None,
 							kind: proto_msg::event::Kind::NewStream as i32,
-							data: vec![]
+							data: vec![],
+                            meta: vec![]
 						}).unwrap();
                     },
                     Err(_) => {

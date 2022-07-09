@@ -16,7 +16,8 @@ fn main() {
         dir: Some(proto_msg::event::Dir::Incoming as i32),
         dest: None,
         kind: proto_msg::event::Kind::NewPlugin as i32,
-        data: vec![content.as_bytes().to_vec()]
+        data: vec![content.as_bytes().to_vec()],
+        meta: vec![]
     };
 
     let msg = event::serialize(event);

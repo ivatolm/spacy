@@ -2,11 +2,13 @@ use std::{
     collections::HashMap,
     sync::mpsc,
     process::Command,
-    net::{TcpListener, TcpStream, Shutdown}, os::unix::prelude::AsRawFd, io::Read
+    net::{TcpListener, TcpStream, Shutdown},
+    os::unix::prelude::AsRawFd,
+    io::Write
 };
 use common::{
     fsm::{FSM, FSMError},
-    event::{proto_msg, self}
+    event::{proto_msg, self}, utils
 };
 use nix::sys::{
     select::{select, FdSet},
@@ -116,28 +118,28 @@ impl PluginMan {
         }
 
         for fd in readfds.fds(None) {
-            let mut stream = self.plugins_streams.get(&fd).unwrap();
+            let mut stream = self.plugins_streams.get_mut(&fd).unwrap();
 
             // Reading message until read
-            let mut message = vec![];
-            let mut buf = [0u8; 1024];
-            loop {
-                let bytes_num = stream.read(&mut buf).unwrap();
-                message.extend(&buf[0..bytes_num]);
-
-                if bytes_num < 1024 {
-                    break;
-                }
-
-                buf = [0u8; 1024];
-            }
+            let message = utils::read_full_stream(&mut stream).unwrap();
 
             // If plugin manager disconnected
             if message.len() == 0 {
                 stream.shutdown(Shutdown::Both).unwrap();
             } else {
-                let event = event::deserialize(&message).unwrap();
-                self.fsm.push_event(event);
+                let events = event::deserialize(&message).unwrap();
+                for event in events {
+                    // Adding plugin's id to event's meta information
+                    let event_with_id = proto_msg::Event {
+                        dir: event.dir,
+                        dest: event.dest,
+                        kind: event.kind,
+                        data: event.data,
+                        meta: vec![fd.to_ne_bytes().to_vec()]
+                    };
+
+                    self.fsm.push_event(event_with_id);
+                }
             }
         }
 
@@ -224,6 +226,28 @@ impl PluginMan {
             log::info!("New plugin started");
         }
 
+        else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
+            // Sending an event to plugin
+            let first_arg = event.meta.get(0).unwrap();
+            let plugin_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
+
+            let stream = self.plugins_streams.get_mut(&plugin_fd).unwrap();
+
+            let event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: None,
+                kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
+                data: event.data,
+                meta: vec![]
+            };
+
+            stream.write(&event::serialize(event)).unwrap();
+        }
+
+        else {
+            log::warn!("Received event with unknown kind");
+        }
+
         self.fsm.transition(2)?;
         Ok(())
     }
@@ -235,12 +259,31 @@ impl PluginMan {
         let mut event_to_main = None;
 
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+            log::debug!("Plugin requested an update of shared memory");
+
             event_to_main = Some(proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Outcoming as i32),
                 dest: Some(proto_msg::event::Dest::Node as i32),
                 kind: event.kind,
-                data: event.data
+                data: event.data,
+                meta: event.meta
             });
+        }
+
+        else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
+            log::debug!("Plugin requested a value from shared memory");
+
+            event_to_main = Some(proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Outcoming as i32),
+                dest: Some(proto_msg::event::Dest::Node as i32),
+                kind: event.kind,
+                data: event.data,
+                meta: event.meta
+            });
+        }
+
+        else {
+            log::warn!("Received event with unknown kind");
         }
 
         if let Some(event) = event_to_main {

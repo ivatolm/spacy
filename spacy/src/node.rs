@@ -153,6 +153,7 @@ impl Node {
         log::debug!("State `handle_outcoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
+        let mut event_to_main = None;
 
         // Update and send new version
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
@@ -173,17 +174,49 @@ impl Node {
                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: None,
                 kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
-                data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value]
+                data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value],
+                meta: vec![]
             };
 
             let broadcast_event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Outcoming as i32),
                 dest: Some(proto_msg::event::Dest::Server as i32),
                 kind: proto_msg::event::Kind::BroadcastEvent as i32,
-                data: vec![event::serialize(actual_event)]
+                data: vec![event::serialize(actual_event)],
+                meta: vec![]
             };
 
-            self.main_event_channel_tx.send(broadcast_event).unwrap();
+            event_to_main = Some(broadcast_event);
+        }
+
+        else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
+            log::debug!("Returning value from shared memory");
+
+            let first_arg = event.data.get(0).unwrap();
+            let key = utils::i32_from_ne_bytes(first_arg).unwrap();
+
+            let data;
+            if self.shared_memory.contains_key(&key) {
+                let value = self.shared_memory.get(&key).unwrap();
+                data = vec![value.to_vec()];
+            } else {
+                data = vec![];
+            }
+
+            let event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: Some(proto_msg::event::Dest::PluginMan as i32),
+                kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
+                data,
+                meta: event.meta
+            };
+
+            event_to_main = Some(event);
+        }
+
+        // Send an event to main
+        if let Some(event) = event_to_main {
+            self.main_event_channel_tx.send(event).unwrap();
         }
 
         self.fsm.transition(1)?;

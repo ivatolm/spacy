@@ -28,10 +28,12 @@ message Event {
         BROADCAST_EVENT = 9;
         NEW_SERVER_EVENT = 10;
         NEW_PLUGIN_MAN_EVENT = 11;
+        GET_FROM_SHARED_MEMORY = 12;
     }
 
     optional Dir dir = 1;
     optional Dest dest = 2;
     Kind kind = 3;
     repeated bytes data = 4;
+    repeated bytes meta = 5;
 }

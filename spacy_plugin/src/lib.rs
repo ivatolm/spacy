@@ -44,7 +44,7 @@ impl SpacyPlugin {
             (0, vec![1, 3]),
             (1, vec![2, 3]),
             (2, vec![1, 3]),
-            (4, vec![])
+            (3, vec![])
         ]));
 
         // Connecting to the plugin manager
@@ -96,13 +96,15 @@ impl SpacyPlugin {
         if message.len() == 0 {
             self.stream.shutdown(Shutdown::Both).unwrap();
 
-            match self.fsm.transition(4) {
+            match self.fsm.transition(3) {
                 Ok(_) => return,
                 Err(_) => panic!(),
             };
         } else {
-            let event = event::deserialize(&message).unwrap();
-            self.fsm.push_event(event);
+            let events = event::deserialize(&message).unwrap();
+            for event in events {
+                self.fsm.push_event(event);
+            }
         }
 
         match self.fsm.transition(2) {
@@ -115,19 +117,14 @@ impl SpacyPlugin {
         let event = self.fsm.pop_event().unwrap();
 
         // If event is new event for plugin
-        if event.kind == proto_msg::event::Kind::NewPluginEvent as i32 {
-            let bytes = event.data.get(0).unwrap();
-            let event_to_plugin = event::deserialize(&bytes).unwrap();
+        let spacy_event = SpacyEvent {
+            kind: event.kind,
+            data: event.data
+        };
 
-            let spacy_event = SpacyEvent {
-                kind: event_to_plugin.kind,
-                data: event_to_plugin.data
-            };
+        self.event_queue.push(spacy_event);
 
-            self.event_queue.push(spacy_event);
-        }
-
-        match self.fsm.transition(3) {
+        match self.fsm.transition(1) {
             Ok(_) => return,
             Err(_) => panic!(),
         };
@@ -151,13 +148,21 @@ impl SpacyPlugin {
             dir: Some(proto_msg::event::Dir::Outcoming as i32),
             dest: None,
             kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
-            data: vec![key.to_ne_bytes().to_vec(), value]
+            data: vec![key.to_ne_bytes().to_vec(), value],
+            meta: vec![]
         };
         self.stream.write(&event::serialize(event)).unwrap();
     }
 
-    fn shared_memory_get(&mut self) {
-        println!("Plugin requested `shared_memory_get`");
+    fn shared_memory_get(&mut self, key: i32) {
+        let event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Outcoming as i32),
+            dest: None,
+            kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
+            data: vec![key.to_ne_bytes().to_vec()],
+            meta: vec![]
+        };
+        self.stream.write(&event::serialize(event)).unwrap();
     }
 
     fn execute(mut _self: PyRefMut<'_, Self>) {

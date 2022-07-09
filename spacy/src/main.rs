@@ -32,29 +32,34 @@ fn main() {
     loop {
         let event_res = main_event_channel_rx.try_recv();
         if let Ok(event) = event_res {
-            if event.kind == proto_msg::event::Dest::PluginMan as i32 {
-                log::info!("Received new event for plugin manager");
+            if let Some(dest) = event.dest {
+                if dest == proto_msg::event::Dest::PluginMan as i32 {
+                    log::info!("Received new event for plugin manager");
 
-                // Sending an event to plugin manager
-                plugin_man_event_channel_tx.send(event).unwrap();
-            }
+                    // Sending an event to plugin manager
+                    plugin_man_event_channel_tx.send(event).unwrap();
+                }
 
-            else if event.kind == proto_msg::event::Dest::Node as i32 {
-                log::debug!("Recevied new event for node");
+                else if dest == proto_msg::event::Dest::Node as i32 {
+                    log::debug!("Recevied new event for node");
 
-                // Sending an event to node
-                node_event_channel_tx.send(event).unwrap();
-            }
+                    // Sending an event to node
+                    node_event_channel_tx.send(event).unwrap();
+                }
 
-            else if event.kind == proto_msg::event::Dest::Server as i32 {
-                log::debug!("Recevied new event for server");
+                else if dest == proto_msg::event::Dest::Server as i32 {
+                    log::debug!("Recevied new event for server");
 
-                // Sending an event to server
-                server_event_channel_tx.send(event).unwrap();
-            }
+                    // Sending an event to server
+                    server_event_channel_tx.send(event).unwrap();
+                }
 
-            else {
-                log::warn!("Received event with unknown destination");
+                else {
+                    log::warn!("Received event with unknown destination");
+                }
+
+            } else {
+                log::warn!("Received event without destination");
             }
         }
 
