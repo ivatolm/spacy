@@ -13,7 +13,8 @@ fn main() {
 
     let content = fs::read_to_string("plugins/basic.py").unwrap();
     let event = proto_msg::Event {
-        dir: proto_msg::event::Direction::Incoming as i32,
+        dir: Some(proto_msg::event::Dir::Incoming as i32),
+        dest: None,
         kind: proto_msg::event::Kind::NewPlugin as i32,
         data: vec![content.as_bytes().to_vec()]
     };

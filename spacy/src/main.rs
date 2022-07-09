@@ -32,31 +32,29 @@ fn main() {
     loop {
         let event_res = main_event_channel_rx.try_recv();
         if let Ok(event) = event_res {
-            if event.kind == proto_msg::event::Kind::NewPluginManEvent as i32 {
+            if event.kind == proto_msg::event::Dest::PluginMan as i32 {
                 log::info!("Received new event for plugin manager");
 
                 // Sending an event to plugin manager
-                let first_arg = event.data.get(0).unwrap();
-                let actual_event = event::deserialize(first_arg).unwrap();
-                plugin_man_event_channel_tx.send(actual_event).unwrap();
+                plugin_man_event_channel_tx.send(event).unwrap();
             }
 
-            else if event.kind == proto_msg::event::Kind::NewNodeEvent as i32 {
+            else if event.kind == proto_msg::event::Dest::Node as i32 {
                 log::debug!("Recevied new event for node");
 
                 // Sending an event to node
-                let first_arg = event.data.get(0).unwrap();
-                let actual_event = event::deserialize(first_arg).unwrap();
-                node_event_channel_tx.send(actual_event).unwrap();
+                node_event_channel_tx.send(event).unwrap();
             }
 
-            else if event.kind == proto_msg::event::Kind::NewServerEvent as i32 {
+            else if event.kind == proto_msg::event::Dest::Server as i32 {
                 log::debug!("Recevied new event for server");
 
                 // Sending an event to server
-                let first_arg = event.data.get(0).unwrap();
-                let actual_event = event::deserialize(first_arg).unwrap();
-                server_event_channel_tx.send(actual_event).unwrap();
+                server_event_channel_tx.send(event).unwrap();
+            }
+
+            else {
+                log::warn!("Received event with unknown destination");
             }
         }
 

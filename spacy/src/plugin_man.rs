@@ -159,21 +159,23 @@ impl PluginMan {
         self.fsm.push_event(event);
 
         // Handling event based on it's direction
-        if event_direction == proto_msg::event::Direction::Incoming as i32 {
-            log::debug!("Received `incoming` event");
+        if let Some(dir) = event_direction {
+            if dir == proto_msg::event::Dir::Incoming as i32 {
+                log::debug!("Received `incoming` event");
 
-            self.fsm.transition(3)?;
-            return Ok(());
+                self.fsm.transition(3)?;
+            }
+
+            else if dir == proto_msg::event::Dir::Outcoming as i32 {
+                log::debug!("Received `outcoming` event");
+
+                self.fsm.transition(4)?;
+            }
+
+            else {
+                log::warn!("Received event with the unknown direction");
+            }
         }
-
-        if event_direction == proto_msg::event::Direction::Outcoming as i32 {
-            log::debug!("Received `outcoming` event");
-
-            self.fsm.transition(4)?;
-            return Ok(());
-        }
-
-        log::warn!("Received event with the unknown direction");
 
         Ok(())
     }
@@ -234,9 +236,10 @@ impl PluginMan {
 
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
             event_to_main = Some(proto_msg::Event {
-                dir: proto_msg::event::Direction::Outcoming as i32,
-                kind: proto_msg::event::Kind::NewNodeEvent as i32,
-                data: vec![event::serialize(event)]
+                dir: Some(proto_msg::event::Dir::Outcoming as i32),
+                dest: Some(proto_msg::event::Dest::Node as i32),
+                kind: event.kind,
+                data: event.data
             });
         }
 

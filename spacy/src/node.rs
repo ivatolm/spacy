@@ -100,16 +100,22 @@ impl Node {
         self.fsm.push_event(event);
 
         // Handling event based on it's direction
-        if event_direction == proto_msg::event::Direction::Incoming as i32 {
-            log::debug!("Received `incoming` event");
+        if let Some(dir) = event_direction {
+            if dir == proto_msg::event::Dir::Incoming as i32 {
+                log::debug!("Received `incoming` event");
 
-            self.fsm.transition(2)?;
-        }
+                self.fsm.transition(2)?;
+            }
 
-        if event_direction == proto_msg::event::Direction::Outcoming as i32 {
-            log::debug!("Received `outcoming` event");
+            else if dir == proto_msg::event::Dir::Outcoming as i32 {
+                log::debug!("Received `outcoming` event");
 
-            self.fsm.transition(3)?;
+                self.fsm.transition(3)?;
+            }
+
+            else {
+                log::warn!("Received event with the unknown direction");
+            }
         }
 
         Ok(())
@@ -164,21 +170,17 @@ impl Node {
 
             // Propagating update to other nodes
             let actual_event = proto_msg::Event {
-                dir: proto_msg::event::Direction::Incoming as i32,
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: None,
                 kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
                 data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value]
             };
 
             let broadcast_event = proto_msg::Event {
-                dir: proto_msg::event::Direction::Outcoming as i32,
+                dir: Some(proto_msg::event::Dir::Outcoming as i32),
+                dest: Some(proto_msg::event::Dest::Server as i32),
                 kind: proto_msg::event::Kind::BroadcastEvent as i32,
                 data: vec![event::serialize(actual_event)]
-            };
-
-            let event = proto_msg::Event {
-                dir: proto_msg::event::Direction::Internal as i32,
-                kind: proto_msg::event::Kind::NewServerEvent as i32,
-                data: vec![event::serialize(broadcast_event)]
             };
 
             self.main_event_channel_tx.send(event).unwrap();

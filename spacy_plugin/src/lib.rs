@@ -162,7 +162,8 @@ impl SpacyPlugin {
 
     fn shared_memory_push(&mut self, key: i32, value: Vec<u8>) {
         let event = proto_msg::Event {
-            dir: proto_msg::event::Direction::Outcoming as i32,
+            dir: Some(proto_msg::event::Dir::Outcoming as i32),
+            dest: None,
             kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
             data: vec![key.to_ne_bytes().to_vec(), value]
         };

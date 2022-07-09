@@ -128,7 +128,8 @@ impl Server {
 
                     // Notifing `listener` thread about new server
                     let event = proto_msg::Event {
-                        dir: proto_msg::event::Direction::Internal as i32,
+                        dir: None,
+                        dest: None,
                         kind: proto_msg::event::Kind::NewFd as i32,
                         data: vec![fd.to_ne_bytes().to_vec()]
                     };
@@ -160,21 +161,24 @@ impl Server {
         self.fsm.push_event(event);
 
         // Handling event based on it's direction
-        if event_direction == proto_msg::event::Direction::Incoming as i32 {
-            log::debug!("Received `incoming` event");
+        if let Some(dir) = event_direction {
+            if dir == proto_msg::event::Dir::Incoming as i32 {
+                log::debug!("Received `incoming` event");
 
-            self.fsm.transition(2)?;
-            return Ok(());
+                self.fsm.transition(2)?;
+            }
+
+            else if dir == proto_msg::event::Dir::Outcoming as i32 {
+                log::debug!("Received `outcoming` event");
+
+                self.fsm.transition(3)?;
+            }
+
+            else {
+                log::warn!("Received event with the unknown direction");
+            }
         }
 
-        if event_direction == proto_msg::event::Direction::Outcoming as i32 {
-            log::debug!("Received `outcoming` event");
-
-            self.fsm.transition(3)?;
-            return Ok(());
-        }
-
-        log::warn!("Received event with the unknown direction");
 
         Ok(())
     }
@@ -202,7 +206,8 @@ impl Server {
 
                         // Notify `listener` thread about new client
                         self.listener_event_channel_tx.send(proto_msg::Event {
-                            dir: proto_msg::event::Direction::Internal as i32,
+                            dir: None,
+                            dest: None,
                             kind: proto_msg::event::Kind::NewFd as i32,
                             data: vec![client_fd.to_ne_bytes().to_vec()]
                         }).unwrap();
@@ -246,7 +251,8 @@ impl Server {
 
                     // Notify `listener` thread about old client
                     self.listener_event_channel_tx.send(proto_msg::Event {
-                        dir: proto_msg::event::Direction::Internal as i32,
+                        dir: None,
+                        dest: None,
                         kind: proto_msg::event::Kind::OldFd as i32,
                         data: vec![client_fd.to_ne_bytes().to_vec()]
                     }).unwrap();
@@ -254,25 +260,23 @@ impl Server {
                     log::info!("Received new {}-bytes message from the client", message.len());
 
                     // Setting up an event to be sent to main
-                    let actual_event = event::deserialize(&message).unwrap();
+                    let event = event::deserialize(&message).unwrap();
 
-                    if actual_event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-                        let event = proto_msg::Event {
-                            dir: proto_msg::event::Direction::Outcoming as i32,
-                            kind: proto_msg::event::Kind::NewNodeEvent as i32,
-                            data: vec![event::serialize(actual_event)]
-                        };
-
-                        event_to_main = Some(event);
+                    let dest;
+                    if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+                        dest = Some(proto_msg::event::Dest::Node as i32);
                     } else {
-                        let event = proto_msg::Event {
-                            dir: proto_msg::event::Direction::Outcoming as i32,
-                            kind: proto_msg::event::Kind::NewPluginManEvent as i32,
-                            data: vec![event::serialize(actual_event)]
-                        };
-
-                        event_to_main = Some(event);
+                        dest = Some(proto_msg::event::Dest::PluginMan as i32);
                     }
+
+                    let event = proto_msg::Event {
+                        dir: Some(proto_msg::event::Dir::Incoming as i32),
+                        dest,
+                        kind: event.kind,
+                        data: event.data
+                    };
+
+                    event_to_main = Some(event);
                 }
             }
         }
@@ -290,7 +294,8 @@ impl Server {
 
             // Notify `listener` thread about new client
             self.listener_event_channel_tx.send(proto_msg::Event {
-                dir: proto_msg::event::Direction::Internal as i32,
+                dir: None,
+                dest: None,
                 kind: proto_msg::event::Kind::NewFd as i32,
                 data: vec![fd.to_ne_bytes().to_vec()]
             }).unwrap();
@@ -397,7 +402,8 @@ impl Server {
             // Send events to the handler
             for fd in readfds.fds(None) {
                 let event = proto_msg::Event {
-                    dir: proto_msg::event::Direction::Incoming as i32,
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
                     kind: proto_msg::event::Kind::NewStreamEvent as i32,
                     data: vec![fd.to_ne_bytes().to_vec()]
                 };
@@ -446,7 +452,8 @@ impl Server {
 						server_stream_tx.send(stream).unwrap();
 						// Notify server, that new client detected
 						server_event_tx.send(proto_msg::Event {
-							dir: proto_msg::event::Direction::Incoming as i32,
+							dir: Some(proto_msg::event::Dir::Incoming as i32),
+                            dest: None,
 							kind: proto_msg::event::Kind::NewStream as i32,
 							data: vec![]
 						}).unwrap();

@@ -3,10 +3,16 @@ syntax = "proto3";
 package common.event;
 
 message Event {
-    enum Direction {
+    enum Dir {
         INTERNAL = 0;
         INCOMING = 1;
         OUTCOMING = 2;
+    }
+
+    enum Dest {
+        Server = 0;
+        PluginMan = 1;
+        Node = 2;
     }
 
     enum Kind {
@@ -24,7 +30,8 @@ message Event {
         NEW_PLUGIN_MAN_EVENT = 11;
     }
 
-    Direction dir = 1;
-    Kind kind = 2;
-    repeated bytes data = 3;
+    optional Dir dir = 1;
+    optional Dest dest = 2;
+    Kind kind = 3;
+    repeated bytes data = 4;
 }
