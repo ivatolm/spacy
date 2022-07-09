@@ -4,7 +4,7 @@ use std::{
     os::unix::prelude::AsRawFd,
     sync::mpsc,
     thread,
-    time, io::Read
+    time, io::{Read, Write}
 };
 use nix::sys::{
     select::{select, FdSet},
@@ -254,7 +254,25 @@ impl Server {
                     log::info!("Received new {}-bytes message from the client", message.len());
 
                     // Setting up an event to be sent to main
-                    event_to_main = Some(event::deserialize(&message).unwrap());
+                    let actual_event = event::deserialize(&message).unwrap();
+
+                    if actual_event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+                        let event = proto_msg::Event {
+                            dir: proto_msg::event::Direction::Outcoming as i32,
+                            kind: proto_msg::event::Kind::NewNodeEvent as i32,
+                            data: vec![event::serialize(actual_event)]
+                        };
+
+                        event_to_main = Some(event);
+                    } else {
+                        let event = proto_msg::Event {
+                            dir: proto_msg::event::Direction::Outcoming as i32,
+                            kind: proto_msg::event::Kind::NewPluginManEvent as i32,
+                            data: vec![event::serialize(actual_event)]
+                        };
+
+                        event_to_main = Some(event);
+                    }
                 }
             }
         }
@@ -289,6 +307,17 @@ impl Server {
 
     fn handle_outcoming_event(&mut self) -> Result<(), ServerError> {
         log::debug!("State `handle_outcoming_event`");
+
+        let event = self.fsm.pop_event().unwrap();
+
+        // Broadcast update shared memory event
+        if event.kind == proto_msg::event::Kind::BroadcastEvent as i32 {
+            let actual_event = event.data.get(0).unwrap();
+
+            for (_fd, mut stream) in self.nodes.iter() {
+                stream.write(actual_event).unwrap();
+            }
+        }
 
         self.fsm.transition(1)?;
         Ok(())

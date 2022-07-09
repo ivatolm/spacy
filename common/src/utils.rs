@@ -34,6 +34,10 @@ pub fn u8_from_ne_bytes(bytes: &[u8]) -> Result<u8, std::array::TryFromSliceErro
     Ok(u8::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
 }
 
+pub fn u128_from_ne_bytes(bytes: &[u8]) -> Result<u128, std::array::TryFromSliceError> {
+    Ok(u128::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
+}
+
 pub fn i32_from_ne_bytes(bytes: &[u8]) -> Result<i32, std::array::TryFromSliceError> {
     Ok(i32::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
 }

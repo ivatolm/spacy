@@ -1,10 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::mpsc
+    sync::mpsc, time
 };
 use common::{
     fsm::{FSM, FSMError},
-    event::proto_msg,
+    event::{proto_msg, self},
     utils
 };
 
@@ -12,8 +12,8 @@ pub struct Node {
     fsm: FSM,
     event_channel_tx: mpsc::Sender<proto_msg::Event>,
     event_channel_rx: mpsc::Receiver<proto_msg::Event>,
-    shared_memory: HashMap<u8, (u8, Vec<u8>)>,
-    shared_memory_version: i32,
+    shared_memory: HashMap<i32, Vec<u8>>,
+    shared_memory_version: u128,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
@@ -122,27 +122,20 @@ impl Node {
 
         // Receive new version and update
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-            // [ version, var_0, kind_0, value_0, ... ]
-            let bytes = event.data.get(0).unwrap();
-            let version = utils::i32_from_ne_bytes(bytes).unwrap();
+            let version_bytes = event.data.get(0).unwrap();
+            let key_bytes = event.data.get(1).unwrap();
+            let value_bytes = event.data.get(2).unwrap();
+
+            let version = utils::u128_from_ne_bytes(version_bytes).unwrap();
+            let key = utils::i32_from_ne_bytes(key_bytes).unwrap();
+            let value = value_bytes.to_vec();
 
             if version > self.shared_memory_version {
-                // Updating local shared memory
                 log::debug!("Syncronizing shared memory...");
-                let updates_num = (event.data.len() - 1) / 3;
 
-                for i in 0..updates_num {
-                    let block = i * 3;
-                    let var_bytes = event.data.get(block + 0).unwrap();
-                    let kind_bytes = event.data.get(block + 1).unwrap();
-                    let value_bytes = event.data.get(block + 2).unwrap();
-
-                    let var = utils::u8_from_ne_bytes(var_bytes).unwrap();
-                    let kind = utils::u8_from_ne_bytes(kind_bytes).unwrap();
-                    let value = value_bytes;
-
-                    log::debug!("{}: {} = {:?}", var, kind, value);
-                }
+                // Updating local shared memory
+                self.shared_memory.insert(key, value);
+                self.shared_memory_version = version;
             }
         }
 
@@ -158,6 +151,37 @@ impl Node {
         // Update and send new version
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
             log::debug!("Broadcasting shared memory update");
+
+            // Parsing received update
+            let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
+            let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();
+            let value = event.data.get(1).unwrap().to_vec();
+            log::debug!("Shared memory update: {}, {}, {:?}", version, key, value);
+
+            // Updating local shared memory
+            self.shared_memory.insert(key, value.clone());
+            self.shared_memory_version = version;
+
+            // Propagating update to other nodes
+            let actual_event = proto_msg::Event {
+                dir: proto_msg::event::Direction::Incoming as i32,
+                kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
+                data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value]
+            };
+
+            let broadcast_event = proto_msg::Event {
+                dir: proto_msg::event::Direction::Outcoming as i32,
+                kind: proto_msg::event::Kind::BroadcastEvent as i32,
+                data: vec![event::serialize(actual_event)]
+            };
+
+            let event = proto_msg::Event {
+                dir: proto_msg::event::Direction::Internal as i32,
+                kind: proto_msg::event::Kind::NewServerEvent as i32,
+                data: vec![event::serialize(broadcast_event)]
+            };
+
+            self.main_event_channel_tx.send(event).unwrap();
         }
 
         self.fsm.transition(1)?;
