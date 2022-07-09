@@ -10,7 +10,7 @@ use std::{
     thread,
     time
 };
-use common::event::{self, proto_msg};
+use common::event::proto_msg;
 
 fn main() {
     env_logger::init();

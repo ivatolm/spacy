@@ -183,7 +183,7 @@ impl Node {
                 data: vec![event::serialize(actual_event)]
             };
 
-            self.main_event_channel_tx.send(event).unwrap();
+            self.main_event_channel_tx.send(broadcast_event).unwrap();
         }
 
         self.fsm.transition(1)?;

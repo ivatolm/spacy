@@ -1,3 +1,5 @@
+use std::io::Read;
+
 fn get_interfaces() -> Vec<pnet::ipnetwork::IpNetwork> {
     let interfaces: Vec<pnet::ipnetwork::IpNetwork> = pnet::datalink::interfaces()
         .into_iter()
@@ -40,4 +42,21 @@ pub fn u128_from_ne_bytes(bytes: &[u8]) -> Result<u128, std::array::TryFromSlice
 
 pub fn i32_from_ne_bytes(bytes: &[u8]) -> Result<i32, std::array::TryFromSliceError> {
     Ok(i32::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
+}
+
+pub fn read_full_stream(stream: &mut std::net::TcpStream) -> Result<Vec<u8>, std::io::Error> {
+    let mut message = vec![];
+    let mut buf = [0u8; 1024];
+    loop {
+        let bytes_num = stream.read(&mut buf)?;
+        message.extend(&buf[0..bytes_num]);
+
+        if bytes_num < 1024 {
+            break;
+        }
+
+        buf = [0u8; 1024];
+    }
+
+    Ok(message)
 }

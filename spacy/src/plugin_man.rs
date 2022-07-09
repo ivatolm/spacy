@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::mpsc,
     process::Command,
-    net::{TcpListener, TcpStream, Shutdown}, os::unix::prelude::{AsRawFd, FromRawFd}, io::Read
+    net::{TcpListener, TcpStream, Shutdown}, os::unix::prelude::AsRawFd, io::Read
 };
 use common::{
     fsm::{FSM, FSMError},

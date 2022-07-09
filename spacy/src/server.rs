@@ -4,7 +4,7 @@ use std::{
     os::unix::prelude::AsRawFd,
     sync::mpsc,
     thread,
-    time, io::{Read, Write}
+    time, io::Write
 };
 use nix::sys::{
     select::{select, FdSet},
@@ -219,22 +219,9 @@ impl Server {
             }
 
             // If it's a fd of a client, that read from stream
-            if let Some(mut stream) = self.clients.get(&fd) {
-                let mut message = vec![];
-
+            if let Some(stream) = self.clients.get_mut(&fd) {
                 // Reading stream until read
-                let mut buf = [0u8; 1024];
-                loop {
-                    let bytes_num = stream.read(&mut buf).unwrap();
-                    message.extend(&buf[0..bytes_num]);
-
-                    if bytes_num < 1024 {
-                        break;
-                    }
-
-                    buf = [0u8; 1024];
-                }
-
+                let message = utils::read_full_stream(stream).unwrap();
 
                 // If we read zero bytes, in TCP it means that client disconnected
                 // else we just have got a new event from the client

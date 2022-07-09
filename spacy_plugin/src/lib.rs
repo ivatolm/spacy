@@ -1,12 +1,12 @@
 use std::{
     net::{TcpStream, Shutdown},
     collections::HashMap,
-    io::{Read, Write},
+    io::Write,
     os::unix::prelude::AsRawFd
 };
 use common::{
     fsm::FSM,
-    event::{self, proto_msg}
+    event::{self, proto_msg}, utils
 };
 use nix::sys::{
     select::{select, FdSet},
@@ -17,6 +17,7 @@ use pyo3::{
 };
 
 #[pyclass]
+#[allow(dead_code)]
 #[derive(Clone)]
 struct SpacyEvent {
     pub kind: i32,
@@ -28,10 +29,6 @@ struct SpacyPlugin {
     fsm: FSM,
     stream: TcpStream,
     event_queue: Vec<SpacyEvent>
-}
-
-enum PluginError {
-    InternalError
 }
 
 #[pymethods]
@@ -93,18 +90,7 @@ impl SpacyPlugin {
         }
 
         // Reading message until read
-        let mut message = vec![];
-        let mut buf = [0u8; 1024];
-        loop {
-            let bytes_num = self.stream.read(&mut buf).unwrap();
-            message.extend(&buf[0..bytes_num]);
-
-            if bytes_num < 1024 {
-                break;
-            }
-
-            buf = [0u8; 1024];
-        }
+        let message = utils::read_full_stream(&mut self.stream).unwrap();
 
         // If plugin manager disconnected
         if message.len() == 0 {
