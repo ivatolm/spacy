@@ -35,6 +35,10 @@ impl FSM {
         self.queue.push_back(event);
     }
 
+    pub fn push_front_event(&mut self, event: proto_msg::Event) {
+        self.queue.push_front(event);
+    }
+
     pub fn pop_event(&mut self) -> Option<proto_msg::Event> {
         self.queue.pop_front()
     }

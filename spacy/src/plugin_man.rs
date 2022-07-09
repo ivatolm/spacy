@@ -21,6 +21,7 @@ pub struct PluginMan {
     event_channel_rx: mpsc::Receiver<proto_msg::Event>,
     listener: TcpListener,
     plugins: HashMap<u32, i32>,
+    plugins_names: HashMap<Vec<u8>, u32>,
     plugins_streams: HashMap<i32, TcpStream>,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
@@ -61,6 +62,7 @@ impl PluginMan {
             event_channel_rx,
             listener,
             plugins: HashMap::new(),
+            plugins_names: HashMap::new(),
             plugins_streams: HashMap::new(),
 
             main_event_channel_tx
@@ -158,7 +160,8 @@ impl PluginMan {
             }
         };
         let event_direction = event.dir;
-        self.fsm.push_event(event);
+        self.fsm.push_front_event(event);
+
 
         // Handling event based on it's direction
         if let Some(dir) = event_direction {
@@ -189,7 +192,10 @@ impl PluginMan {
 
         if event.kind == proto_msg::event::Kind::NewPlugin as i32 {
             let first_arg = event.data.get(0).unwrap();
+            let second_arg = event.data.get(1).unwrap();
+
             let plugin_source = String::from_utf8_lossy(&first_arg).to_string();
+            let plugin_name = second_arg.to_vec();
 
             // Spawning new thread with the plugin
             let exec_status = Command::new("python3")
@@ -220,10 +226,38 @@ impl PluginMan {
                 }
             };
 
-            self.plugins.insert(child.id(), stream.as_raw_fd());
+            let child_id = child.id();
+            self.plugins.insert(child_id, stream.as_raw_fd());
+            self.plugins_names.insert(plugin_name, child_id);
             self.plugins_streams.insert(stream.as_raw_fd(), stream);
 
             log::info!("New plugin started");
+        }
+
+        else if event.kind == proto_msg::event::Kind::NewPluginEvent as i32 {
+            let first_arg = event.data.get(0).unwrap();
+            let second_arg = event.data.get(1).unwrap();
+
+            let plugin_name = first_arg.to_vec();
+            let events_to_plugin = event::deserialize(second_arg).unwrap();
+
+            // Getting plugin's stream from the name
+            let child_id = self.plugins_names.get(&plugin_name).unwrap();
+            let fd = self.plugins.get(&child_id).unwrap();
+            let mut stream = self.plugins_streams.get(&fd).unwrap();
+
+            // Sending an event to plugin
+            for event in events_to_plugin {
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: event.kind,
+                    data: event.data,
+                    meta: vec![fd.to_ne_bytes().to_vec()]
+                };
+
+                stream.write(&event::serialize(event)).unwrap();
+            }
         }
 
         else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
@@ -284,6 +318,7 @@ impl PluginMan {
 
         else {
             log::warn!("Received event with unknown kind");
+            log::warn!("Event kind: {}", event.kind);
         }
 
         if let Some(event) = event_to_main {

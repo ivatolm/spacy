@@ -1,4 +1,3 @@
-from re import S
 import sys
 from os import path
 container_dir = path.abspath(path.join(path.dirname(__name__), './container'))
@@ -13,13 +12,15 @@ class BasicPlugin(spacy_plugin.SpacyPlugin):
         self.iteration = 0
 
     def update(self):
-        print(self.get_event())
-
-        some_value = 42
-        b_some_value = some_value.to_bytes(4, 'little')
+        event = self.get_event()
+        if event is not None:
+            print(f"Plugin has got new event: {event.kind}, {event.data}")
 
         if self.iteration == 0:
+            some_value = 42
+            b_some_value = some_value.to_bytes(4, 'little')
             self.shared_memory_push(0, b_some_value)
+
             self.shared_memory_get(0)
 
         self.iteration += 1

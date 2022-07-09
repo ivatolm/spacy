@@ -24,6 +24,19 @@ struct SpacyEvent {
     pub data: Vec<Vec<u8>>
 }
 
+#[pymethods]
+impl SpacyEvent {
+    #[getter]
+    fn kind(&self) -> i32 {
+        self.kind
+    }
+
+    #[getter]
+    fn data(&self) -> Vec<Vec<u8>> {
+        self.data.to_owned()
+    }
+}
+
 #[pyclass(subclass)]
 struct SpacyPlugin {
     fsm: FSM,

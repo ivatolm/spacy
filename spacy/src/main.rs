@@ -34,7 +34,7 @@ fn main() {
         if let Ok(event) = event_res {
             if let Some(dest) = event.dest {
                 if dest == proto_msg::event::Dest::PluginMan as i32 {
-                    log::info!("Received new event for plugin manager");
+                    log::debug!("Received new event for plugin manager");
 
                     // Sending an event to plugin manager
                     plugin_man_event_channel_tx.send(event).unwrap();
@@ -66,7 +66,7 @@ fn main() {
         node.step().unwrap();
         plugin_man.step().unwrap();
 
-        thread::sleep(time::Duration::from_secs(5));
+        thread::sleep(time::Duration::from_secs(1));
     }
 
     // match server_handle.join() {
