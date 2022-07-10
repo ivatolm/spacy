@@ -6,6 +6,12 @@ sys.path.append(container_dir)
 import spacy_plugin
 import time
 
+def bytes_to_str(bytes_vec):
+    string = ""
+    for byte in bytes_vec:
+        string += chr(byte)
+    return string
+
 class BasicPlugin(spacy_plugin.SpacyPlugin):
     def __init__(self):
         super().__init__()
@@ -14,7 +20,10 @@ class BasicPlugin(spacy_plugin.SpacyPlugin):
     def update(self):
         event = self.get_event()
         if event is not None:
-            print(f"Plugin has got new event: {event.kind}, {event.data}")
+            if event.kind == 123:
+                print(f"Plugin has got new event: {event.kind}, {event.data}, {event.meta}")
+                print(bytes_to_str(event.data[0]))
+                self.respond_client([b"Hello!"], event.meta)
 
         if self.iteration == 0:
             some_value = 42

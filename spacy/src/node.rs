@@ -148,6 +148,10 @@ impl Node {
             }
         }
 
+        else {
+            log::warn!("Received event with unknown kind: {}", event.kind);
+        }
+
         self.fsm.transition(1)?;
         Ok(())
     }
@@ -219,6 +223,10 @@ impl Node {
             };
 
             events_to_main.push(event);
+        }
+
+        else {
+            log::warn!("Received event with unknown kind: {}", event.kind);
         }
 
         // Send events to main

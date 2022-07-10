@@ -132,15 +132,18 @@ impl PluginMan {
                 let events = event::deserialize(&message).unwrap();
                 for event in events {
                     // Adding plugin's id to event's meta information
-                    let event_with_id = proto_msg::Event {
+                    let mut event_meta = event.meta;
+                    event_meta.insert(0, fd.to_ne_bytes().to_vec());
+
+                    let event_with_meta = proto_msg::Event {
                         dir: event.dir,
                         dest: event.dest,
                         kind: event.kind,
                         data: event.data,
-                        meta: vec![fd.to_ne_bytes().to_vec()]
+                        meta: event_meta
                     };
 
-                    self.fsm.push_event(event_with_id);
+                    self.fsm.push_event(event_with_meta);
                 }
             }
         }
@@ -189,9 +192,12 @@ impl PluginMan {
         log::debug!("State `handle_incoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
+        let mut events_to_main = vec![];
 
         if event.kind == proto_msg::event::Kind::NewPlugin as i32 {
             log::debug!("Handling `new_plugin`");
+            // Startup status variable
+            let mut status: i32 = 0;
 
             let first_arg = event.data.get(0).unwrap();
             let second_arg = event.data.get(1).unwrap();
@@ -207,37 +213,42 @@ impl PluginMan {
                 .spawn();
 
             // Check if child is started successfully
-            let mut child = match exec_status {
-                Ok(child) => child,
+            match exec_status {
+                Ok(mut child) => {
+                    // Accept plugin's connection
+                    // TODO: somehow make this call non-blocking (timeout)
+                    match self.listener.accept() {
+                        Ok((stream, _addr)) => {
+                            // Add plugin to local structs
+                            let child_id = child.id();
+                            self.plugins.insert(child_id, stream.as_raw_fd());
+                            self.plugins_names.insert(plugin_name, child_id);
+                            self.plugins_streams.insert(stream.as_raw_fd(), stream);
+
+                            log::info!("New plugin started");
+                        },
+                        Err(err) => {
+                            log::warn!("Error occured while accepting plugin's connection: {}", err);
+                            child.kill().unwrap();
+                            status = -2;
+                        }
+                    };
+                },
                 Err(err) => {
                     log::warn!("Error occured while starting a plugin: {}", err);
-                    // TODO: Notify client about failure
-
-                    self.fsm.transition(2)?;
-                    return Ok(());
+                    status = -1;
                 }
+            }
+
+            // TODO: Notify client about status
+            let response_event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Outcoming as i32),
+                dest: Some(proto_msg::event::Dest::Server as i32),
+                kind: proto_msg::event::Kind::RespondClient as i32,
+                data: vec![status.to_ne_bytes().to_vec()],
+                meta: event.meta
             };
-
-            // Accept plugin's connection
-            // TODO: somehow make this call non-blocking (timeout)
-            let stream = match self.listener.accept() {
-                Ok((stream, _addr)) => stream,
-                Err(err) => {
-                    log::warn!("Error occured while accepting plugin's connection: {}", err);
-                    child.kill().unwrap();
-
-                    self.fsm.transition(2)?;
-                    return Ok(());
-                }
-            };
-
-            // Add plugin to local structs
-            let child_id = child.id();
-            self.plugins.insert(child_id, stream.as_raw_fd());
-            self.plugins_names.insert(plugin_name, child_id);
-            self.plugins_streams.insert(stream.as_raw_fd(), stream);
-
-            log::info!("New plugin started");
+            events_to_main.push(response_event);
         }
 
         else if event.kind == proto_msg::event::Kind::NewPluginEvent as i32 {
@@ -256,13 +267,15 @@ impl PluginMan {
             let mut stream = self.plugins_streams.get(&fd).unwrap();
 
             // Sending an event to plugin
+            let meta = event.meta;
             for event in events_to_plugin {
+                let meta_clone = meta.clone();
                 let event = proto_msg::Event {
                     dir: Some(proto_msg::event::Dir::Incoming as i32),
                     dest: None,
                     kind: event.kind,
                     data: event.data,
-                    meta: vec![fd.to_ne_bytes().to_vec()]
+                    meta: meta_clone
                 };
 
                 stream.write(&event::serialize(event)).unwrap();
@@ -292,7 +305,12 @@ impl PluginMan {
         }
 
         else {
-            log::warn!("Received event with unknown kind");
+            log::warn!("Received event with unknown kind: {}", event.kind);
+        }
+
+        // Sending events to main
+        for event in events_to_main {
+            self.main_event_channel_tx.send(event).unwrap();
         }
 
         self.fsm.transition(2)?;
@@ -303,30 +321,48 @@ impl PluginMan {
         log::debug!("State `handle_outcoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
-        let mut event_to_main = None;
+        let mut events_to_main = vec![];
 
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
             log::debug!("Handling `update_shared_memory`");
 
-            event_to_main = Some(proto_msg::Event {
+            let event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Outcoming as i32),
                 dest: Some(proto_msg::event::Dest::Node as i32),
                 kind: event.kind,
                 data: event.data,
                 meta: event.meta
-            });
+            };
+            events_to_main.push(event);
         }
 
         else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
             log::debug!("Handling `get_from_shared_memory`");
 
-            event_to_main = Some(proto_msg::Event {
+            let event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Outcoming as i32),
                 dest: Some(proto_msg::event::Dest::Node as i32),
                 kind: event.kind,
                 data: event.data,
                 meta: event.meta
-            });
+            };
+            events_to_main.push(event);
+        }
+
+        else if event.kind == proto_msg::event::Kind::RespondClient as i32 {
+            log::debug!("Handling `respond_client`");
+
+            // Removing unnecessary meta information
+            let event_meta = &event.meta[1..];
+
+            let event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Outcoming as i32),
+                dest: Some(proto_msg::event::Dest::Server as i32),
+                kind: event.kind,
+                data: event.data,
+                meta: event_meta.to_vec()
+            };
+            events_to_main.push(event);
         }
 
         else {
@@ -334,7 +370,7 @@ impl PluginMan {
         }
 
         // Sending events to main
-        if let Some(event) = event_to_main {
+        for event in events_to_main {
             self.main_event_channel_tx.send(event).unwrap();
         }
 

@@ -25,6 +25,7 @@ message Event {
         UPDATE_SHARED_MEMORY = 6;
         GET_FROM_SHARED_MEMORY = 7;
         BROADCAST_EVENT = 8;
+        RESPOND_CLIENT = 9;
     }
 
     optional Dir dir = 1;

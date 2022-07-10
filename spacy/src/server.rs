@@ -226,7 +226,7 @@ impl Server {
             }
 
             // If it's a fd of a client, that read from stream
-            if let Some(stream) = self.clients.get_mut(&fd) {
+            else if let Some(stream) = self.clients.get_mut(&fd) {
                 log::debug!("Handling `new_stream_event` from client or node");
 
                 // Reading stream until read
@@ -249,12 +249,13 @@ impl Server {
                             dest = Some(proto_msg::event::Dest::PluginMan as i32);
                         }
 
+                        // Adding clients fd to meta information
                         let event = proto_msg::Event {
                             dir: Some(proto_msg::event::Dir::Incoming as i32),
                             dest,
                             kind: event.kind,
                             data: event.data,
-                            meta: vec![]
+                            meta: vec![fd.to_ne_bytes().to_vec()]
                         };
 
                         events_to_main.push(event);
@@ -283,7 +284,7 @@ impl Server {
         }
 
         // If we got new event from `scanner` thread
-        if event.kind == proto_msg::event::Kind::NewStream as i32 {
+        else if event.kind == proto_msg::event::Kind::NewStream as i32 {
             log::debug!("Handling `new_stream`");
 
             // Reading sent stream and adding it to the list of nodes
@@ -302,6 +303,10 @@ impl Server {
                 data: vec![fd.to_ne_bytes().to_vec()],
                 meta: vec![]
             }).unwrap();
+        }
+
+        else {
+            log::warn!("Received event with unknown kind: {}", event.kind);
         }
 
         // Sending events to main
@@ -327,6 +332,25 @@ impl Server {
             for (_fd, mut stream) in self.nodes.iter() {
                 stream.write(actual_event).unwrap();
             }
+        }
+
+        // Send a response to a client
+        else if event.kind == proto_msg::event::Kind::RespondClient as i32 {
+            log::debug!("Handling `respond_client`");
+
+            let actual_event = event.data.get(0).unwrap();
+
+            let first_arg = event.meta.get(0).unwrap();
+            let client_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
+
+            // Client may be already disconnected
+            let mut client_stream = self.clients.get(&client_fd).unwrap();
+
+            client_stream.write(actual_event).unwrap();
+        }
+
+        else {
+            log::warn!("Received event with unknown kind: {}", event.kind);
         }
 
         self.fsm.transition(1)?;

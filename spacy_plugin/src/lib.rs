@@ -21,7 +21,8 @@ use pyo3::{
 #[derive(Clone)]
 struct SpacyEvent {
     pub kind: i32,
-    pub data: Vec<Vec<u8>>
+    pub data: Vec<Vec<u8>>,
+    pub meta: Vec<Vec<u8>>
 }
 
 #[pymethods]
@@ -34,6 +35,11 @@ impl SpacyEvent {
     #[getter]
     fn data(&self) -> Vec<Vec<u8>> {
         self.data.to_owned()
+    }
+
+    #[getter]
+    fn meta(&self) -> Vec<Vec<u8>> {
+        self.meta.to_owned()
     }
 }
 
@@ -129,10 +135,10 @@ impl SpacyPlugin {
     fn handle_event(&mut self) {
         let event = self.fsm.pop_event().unwrap();
 
-        // If event is new event for plugin
         let spacy_event = SpacyEvent {
             kind: event.kind,
-            data: event.data
+            data: event.data,
+            meta: event.meta
         };
 
         self.event_queue.push(spacy_event);
@@ -174,6 +180,17 @@ impl SpacyPlugin {
             kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
             data: vec![key.to_ne_bytes().to_vec()],
             meta: vec![]
+        };
+        self.stream.write(&event::serialize(event)).unwrap();
+    }
+
+    fn respond_client(&mut self, data: Vec<Vec<u8>>, meta: Vec<Vec<u8>>) {
+        let event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Outcoming as i32),
+            dest: None,
+            kind: proto_msg::event::Kind::RespondClient as i32,
+            data,
+            meta
         };
         self.stream.write(&event::serialize(event)).unwrap();
     }
