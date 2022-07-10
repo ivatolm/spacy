@@ -20,15 +20,11 @@ message Event {
         NEW_STREAM_EVENT = 1;
         NEW_FD = 2;
         OLD_FD = 3;
-        NEW_CLIENT_EVENT = 4;
-        NEW_PLUGIN = 5;
-        NEW_PLUGIN_EVENT = 6;
-        UPDATE_SHARED_MEMORY = 7;
-        NEW_NODE_EVENT = 8;
-        BROADCAST_EVENT = 9;
-        NEW_SERVER_EVENT = 10;
-        NEW_PLUGIN_MAN_EVENT = 11;
-        GET_FROM_SHARED_MEMORY = 12;
+        NEW_PLUGIN = 4;
+        NEW_PLUGIN_EVENT = 5;
+        UPDATE_SHARED_MEMORY = 6;
+        GET_FROM_SHARED_MEMORY = 7;
+        BROADCAST_EVENT = 8;
     }
 
     optional Dir dir = 1;

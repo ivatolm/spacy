@@ -80,8 +80,6 @@ impl Node {
     fn init(&mut self) -> Result<(), NodeError> {
         log::debug!("State `init`");
 
-        // Nothing to do
-
         self.fsm.transition(1)?;
         Ok(())
     }
@@ -116,6 +114,9 @@ impl Node {
             else {
                 log::warn!("Received event with the unknown direction");
             }
+
+        } else {
+            log::warn!("Received event without direction");
         }
 
         Ok(())
@@ -128,17 +129,19 @@ impl Node {
 
         // Receive new version and update
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+            log::debug!("Handling `update_shared_memory`");
+
             let version_bytes = event.data.get(0).unwrap();
             let key_bytes = event.data.get(1).unwrap();
             let value_bytes = event.data.get(2).unwrap();
 
+            // Parsing update's data
             let version = utils::u128_from_ne_bytes(version_bytes).unwrap();
             let key = utils::i32_from_ne_bytes(key_bytes).unwrap();
             let value = value_bytes.to_vec();
 
+            // If received version is actually newer than local
             if version > self.shared_memory_version {
-                log::debug!("Syncronizing shared memory...");
-
                 // Updating local shared memory
                 self.shared_memory.insert(key, value);
                 self.shared_memory_version = version;
@@ -153,23 +156,22 @@ impl Node {
         log::debug!("State `handle_outcoming_event`");
 
         let event = self.fsm.pop_event().unwrap();
-        let mut event_to_main = None;
+        let mut events_to_main = vec![];
 
         // Update and send new version
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-            log::debug!("Broadcasting shared memory update");
+            log::debug!("Handling `update_shared_memory`");
 
             // Parsing received update
             let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
             let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();
             let value = event.data.get(1).unwrap().to_vec();
-            log::debug!("Shared memory update: {}, {}, {:?}", version, key, value);
 
             // Updating local shared memory
             self.shared_memory.insert(key, value.clone());
             self.shared_memory_version = version;
 
-            // Propagating update to other nodes
+            // Creating update event
             let actual_event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: None,
@@ -178,6 +180,7 @@ impl Node {
                 meta: vec![]
             };
 
+            // Propagating update event to other nodes
             let broadcast_event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Outcoming as i32),
                 dest: Some(proto_msg::event::Dest::Server as i32),
@@ -186,15 +189,18 @@ impl Node {
                 meta: vec![]
             };
 
-            event_to_main = Some(broadcast_event);
+            events_to_main.push(broadcast_event);
         }
 
         else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
             log::debug!("Returning value from shared memory");
 
             let first_arg = event.data.get(0).unwrap();
+
+            // Parsing event
             let key = utils::i32_from_ne_bytes(first_arg).unwrap();
 
+            // Returning value if key is valid
             let data;
             if self.shared_memory.contains_key(&key) {
                 let value = self.shared_memory.get(&key).unwrap();
@@ -203,6 +209,7 @@ impl Node {
                 data = vec![];
             }
 
+            // Creating event for response
             let event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: Some(proto_msg::event::Dest::PluginMan as i32),
@@ -211,11 +218,11 @@ impl Node {
                 meta: event.meta
             };
 
-            event_to_main = Some(event);
+            events_to_main.push(event);
         }
 
-        // Send an event to main
-        if let Some(event) = event_to_main {
+        // Send events to main
+        for event in events_to_main {
             self.main_event_channel_tx.send(event).unwrap();
         }
 

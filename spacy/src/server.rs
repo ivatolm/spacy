@@ -192,16 +192,21 @@ impl Server {
 
         // If we got new event from `listener` thread
         if event.kind == proto_msg::event::Kind::NewStreamEvent as i32 {
+            log::debug!("Handling `new_stream_event`");
+
             // Parsing fd from the event
             let bytes = event.data.get(0).unwrap();
             let fd = utils::i32_from_ne_bytes(bytes).unwrap();
 
             // If it's a fd of a server, than accept new client
             if let Some(listener) = self.servers.get(&fd) {
+                log::debug!("Handling `new_stream_event` from server");
+
                 match listener.accept() {
                     Ok((stream, addr)) => {
                         log::info!("New client connected {}", addr);
 
+                        // Getting stream's fd
                         let client_fd = stream.as_raw_fd();
                         self.clients.insert(client_fd, stream);
 
@@ -222,12 +227,39 @@ impl Server {
 
             // If it's a fd of a client, that read from stream
             if let Some(stream) = self.clients.get_mut(&fd) {
+                log::debug!("Handling `new_stream_event` from client or node");
+
                 // Reading stream until read
                 let message = utils::read_full_stream(stream).unwrap();
 
                 // If we read zero bytes, in TCP it means that client disconnected
                 // else we just have got a new event from the client
-                if message.len() == 0 {
+                if message.len() != 0 {
+                    log::info!("Received new {}-bytes message from the client", message.len());
+
+                    // Setting up an event to be sent to main
+                    let events = event::deserialize(&message).unwrap();
+                    for event in events {
+                        // If event kind is `update_shared_memory` then event is handled by `node`
+                        // else its event from client and its handled by `plugin manager`
+                        let dest;
+                        if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
+                            dest = Some(proto_msg::event::Dest::Node as i32);
+                        } else {
+                            dest = Some(proto_msg::event::Dest::PluginMan as i32);
+                        }
+
+                        let event = proto_msg::Event {
+                            dir: Some(proto_msg::event::Dir::Incoming as i32),
+                            dest,
+                            kind: event.kind,
+                            data: event.data,
+                            meta: vec![]
+                        };
+
+                        events_to_main.push(event);
+                    }
+                } else {
                     let client_fd = fd;
 
                     log::info!("Client disconnected {}", stream.peer_addr().unwrap());
@@ -246,36 +278,14 @@ impl Server {
                         data: vec![client_fd.to_ne_bytes().to_vec()],
                         meta: vec![]
                     }).unwrap();
-                } else {
-                    log::info!("Received new {}-bytes message from the client", message.len());
-
-                    // Setting up an event to be sent to main
-                    let events = event::deserialize(&message).unwrap();
-                    for event in events {
-                        let dest;
-                        if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-                            dest = Some(proto_msg::event::Dest::Node as i32);
-                        } else {
-                            dest = Some(proto_msg::event::Dest::PluginMan as i32);
-                        }
-
-                        let event = proto_msg::Event {
-                            dir: Some(proto_msg::event::Dir::Incoming as i32),
-                            dest,
-                            kind: event.kind,
-                            data: event.data,
-                            meta: vec![]
-                        };
-
-                        events_to_main.push(event);
-                    }
                 }
             }
         }
 
         // If we got new event from `scanner` thread
         if event.kind == proto_msg::event::Kind::NewStream as i32 {
-            log::debug!("Scanner found new node");
+            log::debug!("Handling `new_stream`");
+
             // Reading sent stream and adding it to the list of nodes
             let stream = self.stream_channel_rx.recv().unwrap();
             let addr = stream.peer_addr().unwrap();
@@ -294,7 +304,7 @@ impl Server {
             }).unwrap();
         }
 
-        // Send an event to main
+        // Sending events to main
         for event in events_to_main {
             self.main_event_channel_tx.send(event).unwrap();
         }
@@ -310,6 +320,8 @@ impl Server {
 
         // Broadcast update shared memory event
         if event.kind == proto_msg::event::Kind::BroadcastEvent as i32 {
+            log::debug!("Handling `broadcast_event`");
+
             let actual_event = event.data.get(0).unwrap();
 
             for (_fd, mut stream) in self.nodes.iter() {

@@ -105,19 +105,19 @@ impl SpacyPlugin {
         // Reading message until read
         let message = utils::read_full_stream(&mut self.stream).unwrap();
 
-        // If plugin manager disconnected
-        if message.len() == 0 {
+        // If message length is zero, then plugin manager disconnected
+        if message.len() != 0 {
+            let events = event::deserialize(&message).unwrap();
+            for event in events {
+                self.fsm.push_event(event);
+            }
+        } else {
             self.stream.shutdown(Shutdown::Both).unwrap();
 
             match self.fsm.transition(3) {
                 Ok(_) => return,
                 Err(_) => panic!(),
             };
-        } else {
-            let events = event::deserialize(&message).unwrap();
-            for event in events {
-                self.fsm.push_event(event);
-            }
         }
 
         match self.fsm.transition(2) {

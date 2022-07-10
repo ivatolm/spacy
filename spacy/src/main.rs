@@ -34,28 +34,28 @@ fn main() {
         if let Ok(event) = event_res {
             if let Some(dest) = event.dest {
                 if dest == proto_msg::event::Dest::PluginMan as i32 {
-                    log::debug!("Received new event for plugin manager");
+                    log::debug!("Received `plugin_manager` event");
 
                     // Sending an event to plugin manager
                     plugin_man_event_channel_tx.send(event).unwrap();
                 }
 
                 else if dest == proto_msg::event::Dest::Node as i32 {
-                    log::debug!("Recevied new event for node");
+                    log::debug!("Recevied `node` event");
 
                     // Sending an event to node
                     node_event_channel_tx.send(event).unwrap();
                 }
 
                 else if dest == proto_msg::event::Dest::Server as i32 {
-                    log::debug!("Recevied new event for server");
+                    log::debug!("Recevied `server` event");
 
                     // Sending an event to server
                     server_event_channel_tx.send(event).unwrap();
                 }
 
                 else {
-                    log::warn!("Received event with unknown destination");
+                    log::warn!("Received event with unknown destination: {:?}", event.dest);
                 }
 
             } else {
