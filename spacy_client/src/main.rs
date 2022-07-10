@@ -1,103 +1,120 @@
 use std::{
-    net::TcpStream,
+    net::{TcpStream, Shutdown},
     io::Write,
     fs
 };
-use common::event::{
-    self,
-    proto_msg
-};
+use common::{event::{proto_msg, self}, utils};
+
+fn get_from_user(greeter: &str) -> String {
+    print!("{}", greeter);
+    std::io::stdout().flush().unwrap();
+
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).unwrap();
+    line.remove(line.len() - 1);
+
+    line
+}
 
 fn main() {
     println!("Connecting to the node...");
-    let mut stream = TcpStream::connect(("192.168.0.106", 32000)).unwrap();
+    let mut stream = TcpStream::connect(("192.168.2.103", 32000)).unwrap();
+    let event = proto_msg::Event {
+        dir: None,
+        dest: None,
+        kind: proto_msg::event::Kind::MarkMeClient as i32,
+        data: vec![],
+        meta: vec![]
+    };
+    stream.write(&event::serialize(event)).unwrap();
+
     println!("Connected!");
 
     loop {
-        print!("> ");
-        std::io::stdout().flush().unwrap();
+        let command = get_from_user(": ");
 
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).unwrap();
-        line.remove(line.len() - 1);
+        let event = match command.as_str() {
+            "new_plugin" => {
+                let filename = get_from_user("Filename: ");
+                let path = format!("plugins/{}", filename);
+                let content = match fs::read_to_string(path) {
+                    Ok(content) => content,
+                    Err(error) => {
+                        panic!("{}", error);
+                    }
+                };
 
-        // If user input is `new_plugin`
-        if line == "new_plugin" {
-            print!("Filename: ");
-            std::io::stdout().flush().unwrap();
+                let name = get_from_user("Name: ");
 
-            let mut filename = String::new();
-            std::io::stdin().read_line(&mut filename).unwrap();
-            filename.remove(filename.len() - 1);
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: proto_msg::event::Kind::NewPlugin as i32,
+                    data: vec![content.as_bytes().to_vec(), name.as_bytes().to_vec()],
+                    meta: vec![]
+                };
 
-            let path = format!("plugins/{}", filename);
-            let content = fs::read_to_string(path).unwrap();
+                event
+            },
+            "new_event" => {
+                let plugin_name = get_from_user("Plugin name: ");
+                let event_kind = get_from_user("Event kind: ");
+                let event_data = get_from_user("Event data: ");
 
-            print!("Name: ");
-            std::io::stdout().flush().unwrap();
+                let mut data = vec![];
+                for slice in event_data.split('%') {
+                    data.push(slice.as_bytes().to_vec());
+                }
 
-            let mut name = String::new();
-            std::io::stdin().read_line(&mut name).unwrap();
-            name.remove(name.len() - 1);
+                let result = event_kind.parse::<i32>();
+                if let Err(error) = result {
+                    println!("Maybe your input wasn't i32?");
+                    panic!("{}", error);
+                }
 
-            let event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: None,
-                kind: proto_msg::event::Kind::NewPlugin as i32,
-                data: vec![content.as_bytes().to_vec(), name.as_bytes().to_vec()],
-                meta: vec![]
-            };
+                let actual_event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: result.ok().unwrap(),
+                    data,
+                    meta: vec![]
+                };
 
-            stream.write(&event::serialize(event)).unwrap();
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: proto_msg::event::Kind::NewPluginEvent as i32,
+                    data: vec![plugin_name.as_bytes().to_vec(), event::serialize(actual_event)],
+                    meta: vec![]
+                };
 
-            println!("Done!");
-        }
+                event
+            },
+            _ => {
+                println!("Unknown command!");
+                continue;
+            }
+        };
 
-        else if line == "new_event" {
-            print!("Plugin name: ");
-            std::io::stdout().flush().unwrap();
+        stream.write(&event::serialize(event)).unwrap();
+        println!("Done! Waiting for response...");
 
-            let mut plugin_name = String::new();
-            std::io::stdin().read_line(&mut plugin_name).unwrap();
-            plugin_name.remove(plugin_name.len() - 1);
+        let msg = utils::read_full_stream(&mut stream).unwrap();
+        if msg.len() != 0 {
+            let events = event::deserialize(&msg).unwrap();
+            for event in events {
+                println!("Kind: {}", event.kind);
+                println!("Data: {:?}", event.data);
+                if event.data.len() > 0 {
+                    let first_arg = event.data.get(0).unwrap();
+                    println!("Data: {:?}", String::from_utf8_lossy(first_arg));
+                }
+            }
 
-            print!("Event id: ");
-            std::io::stdout().flush().unwrap();
-
-            let mut event_kind = String::new();
-            std::io::stdin().read_line(&mut event_kind).unwrap();
-            event_kind.remove(event_kind.len() - 1);
-
-            print!("Event data: ");
-            std::io::stdout().flush().unwrap();
-
-            let mut event_data = String::new();
-            std::io::stdin().read_line(&mut event_data).unwrap();
-            event_data.remove(event_data.len() - 1);
-
-            let actual_event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: None,
-                kind: event_kind.parse::<i32>().unwrap(),
-                data: vec![event_data.as_bytes().to_vec()],
-                meta: vec![]
-            };
-
-            let event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: None,
-                kind: proto_msg::event::Kind::NewPluginEvent as i32,
-                data: vec![plugin_name.as_bytes().to_vec(), event::serialize(actual_event)],
-                meta: vec![]
-            };
-
-            stream.write(&event::serialize(event)).unwrap();
-
-            println!("Done!");
-        }
-
-        else {
-            println!("Unknown command!");
+        } else {
+            println!("System disconnected");
+            stream.shutdown(Shutdown::Both).unwrap();
+            break;
         }
     }
 }

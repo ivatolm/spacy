@@ -133,7 +133,7 @@ impl SpacyPlugin {
     }
 
     fn handle_event(&mut self) {
-        let event = self.fsm.pop_event().unwrap();
+        let event = self.fsm.pop_front_event().unwrap();
 
         let spacy_event = SpacyEvent {
             kind: event.kind,

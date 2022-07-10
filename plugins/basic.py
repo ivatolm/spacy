@@ -13,29 +13,56 @@ def bytes_to_str(bytes_vec):
     return string
 
 class BasicPlugin(spacy_plugin.SpacyPlugin):
+    GET_FROM_SHARED_MEMORY = 9
+    SAVE_DATA = 100
+    GET_DATA = 101
+
     def __init__(self):
         super().__init__()
-        self.iteration = 0
+        self.queue = []
 
     def update(self):
         event = self.get_event()
-        if event is not None:
-            if event.kind == 123:
-                print(f"Plugin has got new event: {event.kind}, {event.data}, {event.meta}")
-                print(bytes_to_str(event.data[0]))
-                self.respond_client([b"Hello!"], event.meta)
+        if not event: return
 
-        if self.iteration == 0:
-            some_value = 42
-            b_some_value = some_value.to_bytes(4, 'little')
-            self.shared_memory_push(0, b_some_value)
+        if event.kind == self.GET_FROM_SHARED_MEMORY:
+            data = event.data[0]
 
-            self.shared_memory_get(0)
+            response = self.queue.pop(0)
 
-        self.iteration += 1
-        time.sleep(1)
+            message = response[0].format(bytes_to_str(data))
+            print(response, message)
+            self.respond_client([bytes(message, encoding="utf-8")], response[1])
+
+        elif event.kind == self.SAVE_DATA:
+            if len(event.data) != 2:
+                self.respond_client([b"Wrong number of arguments"], event.meta)
+                self.waiting_for_data = True
+            else:
+                key, value = event.data
+
+                int_key = int(bytes_to_str(key))
+
+                self.shared_memory_push(int_key, value)
+                self.respond_client([b"Data will be saved"], event.meta)
+
+        elif event.kind == self.GET_DATA:
+            if len(event.data) != 1:
+                self.respond_client([b"Wrong number of arguments"], event.meta)
+            else:
+                key = event.data[0]
+
+                int_key = int(bytes_to_str(key))
+
+                self.shared_memory_get(int_key)
+                self.queue.append(("Your data: {}", event.meta))
+
+        else:
+            self.respond_client([b"Unknown command!"], event.meta)
+
 
 plugin = BasicPlugin()
 while True:
     plugin.step()
     plugin.execute()
+    time.sleep(1)

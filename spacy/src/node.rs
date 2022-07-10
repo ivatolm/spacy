@@ -125,7 +125,7 @@ impl Node {
     fn handle_incoming_event(&mut self) -> Result<(), NodeError> {
         log::debug!("State `handle_incoming_event`");
 
-        let event = self.fsm.pop_event().unwrap();
+        let event = self.fsm.pop_front_event().unwrap();
 
         // Receive new version and update
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
@@ -159,7 +159,7 @@ impl Node {
     fn handle_outcoming_event(&mut self) -> Result<(), NodeError> {
         log::debug!("State `handle_outcoming_event`");
 
-        let event = self.fsm.pop_event().unwrap();
+        let event = self.fsm.pop_front_event().unwrap();
         let mut events_to_main = vec![];
 
         // Update and send new version

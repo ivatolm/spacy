@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::{TcpListener, TcpStream, IpAddr, Ipv4Addr, SocketAddr, Shutdown},
     os::unix::prelude::AsRawFd,
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread,
     time, io::Write
 };
@@ -24,6 +24,7 @@ pub struct Server {
     servers: HashMap<i32, TcpListener>,
     clients: HashMap<i32, TcpStream>,
     nodes: HashMap<i32, TcpStream>,
+    nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>,
     listener_event_channel_tx: mpsc::Sender<proto_msg::Event>,
     listener_handle: thread::JoinHandle<()>,
     scanner_handle: thread::JoinHandle<()>,
@@ -68,8 +69,12 @@ impl Server {
         let server_event_channel_tx = event_channel_tx.clone();
 
 		// Spawning `scanner`
+        let nodes_ips = Arc::new(Mutex::new(HashMap::new()));
+        let known_nodes_ips = nodes_ips.clone();
 		let scanner_handle = thread::spawn(move || {
-			Self::t_scanner(server_event_channel_tx, scanner_stream_channel_tx);
+			Self::t_scanner(server_event_channel_tx,
+                            scanner_stream_channel_tx,
+                            known_nodes_ips);
 		});
 
         Self {
@@ -80,6 +85,7 @@ impl Server {
             servers: HashMap::new(),
             clients: HashMap::new(),
             nodes: HashMap::new(),
+            nodes_ips,
             listener_event_channel_tx,
             listener_handle,
 			scanner_handle,
@@ -180,15 +186,13 @@ impl Server {
             }
         }
 
-
         Ok(())
     }
 
     fn handle_incoming_event(&mut self) -> Result<(), ServerError> {
         log::debug!("State `handle_incoming_event`");
 
-        let event = self.fsm.pop_event().unwrap();
-        let mut events_to_main = vec![];
+        let event = self.fsm.pop_front_event().unwrap();
 
         // If we got new event from `listener` thread
         if event.kind == proto_msg::event::Kind::NewStreamEvent as i32 {
@@ -198,120 +202,31 @@ impl Server {
             let bytes = event.data.get(0).unwrap();
             let fd = utils::i32_from_ne_bytes(bytes).unwrap();
 
-            // If it's a fd of a server, than accept new client
-            if let Some(listener) = self.servers.get(&fd) {
-                log::debug!("Handling `new_stream_event` from server");
-
-                match listener.accept() {
-                    Ok((stream, addr)) => {
-                        log::info!("New client connected {}", addr);
-
-                        // Getting stream's fd
-                        let client_fd = stream.as_raw_fd();
-                        self.clients.insert(client_fd, stream);
-
-                        // Notify `listener` thread about new client
-                        self.listener_event_channel_tx.send(proto_msg::Event {
-                            dir: None,
-                            dest: None,
-                            kind: proto_msg::event::Kind::NewFd as i32,
-                            data: vec![client_fd.to_ne_bytes().to_vec()],
-                            meta: vec![]
-                        }).unwrap();
-                    },
-                    Err(error) => {
-                        log::warn!("Couldn't connect new client: {}", error);
-                    }
-                };
+            // Matching fd to handler
+            if self.servers.contains_key(&fd) {
+                self.handle_new_stream_event_server(fd)?;
             }
 
-            // If it's a fd of a client, that read from stream
-            else if let Some(stream) = self.clients.get_mut(&fd) {
-                log::debug!("Handling `new_stream_event` from client or node");
+            else if self.clients.contains_key(&fd) {
+                self.handle_new_stream_event_client(fd)?;
+            }
 
-                // Reading stream until read
-                let message = utils::read_full_stream(stream).unwrap();
+            else if self.nodes.contains_key(&fd) {
+                self.handle_new_stream_event_node(fd)?;
+            }
 
-                // If we read zero bytes, in TCP it means that client disconnected
-                // else we just have got a new event from the client
-                if message.len() != 0 {
-                    log::info!("Received new {}-bytes message from the client", message.len());
-
-                    // Setting up an event to be sent to main
-                    let events = event::deserialize(&message).unwrap();
-                    for event in events {
-                        // If event kind is `update_shared_memory` then event is handled by `node`
-                        // else its event from client and its handled by `plugin manager`
-                        let dest;
-                        if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-                            dest = Some(proto_msg::event::Dest::Node as i32);
-                        } else {
-                            dest = Some(proto_msg::event::Dest::PluginMan as i32);
-                        }
-
-                        // Adding clients fd to meta information
-                        let event = proto_msg::Event {
-                            dir: Some(proto_msg::event::Dir::Incoming as i32),
-                            dest,
-                            kind: event.kind,
-                            data: event.data,
-                            meta: vec![fd.to_ne_bytes().to_vec()]
-                        };
-
-                        events_to_main.push(event);
-                    }
-                } else {
-                    let client_fd = fd;
-
-                    log::info!("Client disconnected {}", stream.peer_addr().unwrap());
-
-                    // Shutting down the stream
-                    stream.shutdown(Shutdown::Both).unwrap();
-
-                    // Removing client from client-list
-                    self.clients.remove(&client_fd);
-
-                    // Notify `listener` thread about old client
-                    self.listener_event_channel_tx.send(proto_msg::Event {
-                        dir: None,
-                        dest: None,
-                        kind: proto_msg::event::Kind::OldFd as i32,
-                        data: vec![client_fd.to_ne_bytes().to_vec()],
-                        meta: vec![]
-                    }).unwrap();
-                }
+            else {
+                log::warn!("There is no handler for this fd: {}", fd);
             }
         }
 
         // If we got new event from `scanner` thread
         else if event.kind == proto_msg::event::Kind::NewStream as i32 {
-            log::debug!("Handling `new_stream`");
-
-            // Reading sent stream and adding it to the list of nodes
-            let stream = self.stream_channel_rx.recv().unwrap();
-            let addr = stream.peer_addr().unwrap();
-            log::info!("New node connected {}", addr);
-
-            let fd = stream.as_raw_fd();
-            self.nodes.insert(fd, stream);
-
-            // Notify `listener` thread about new client
-            self.listener_event_channel_tx.send(proto_msg::Event {
-                dir: None,
-                dest: None,
-                kind: proto_msg::event::Kind::NewFd as i32,
-                data: vec![fd.to_ne_bytes().to_vec()],
-                meta: vec![]
-            }).unwrap();
+            self.handle_new_stream()?;
         }
 
         else {
             log::warn!("Received event with unknown kind: {}", event.kind);
-        }
-
-        // Sending events to main
-        for event in events_to_main {
-            self.main_event_channel_tx.send(event).unwrap();
         }
 
         self.fsm.transition(1)?;
@@ -321,32 +236,16 @@ impl Server {
     fn handle_outcoming_event(&mut self) -> Result<(), ServerError> {
         log::debug!("State `handle_outcoming_event`");
 
-        let event = self.fsm.pop_event().unwrap();
+        let event = self.fsm.pop_front_event().unwrap();
 
-        // Broadcast update shared memory event
+        // Broadcasting some event
         if event.kind == proto_msg::event::Kind::BroadcastEvent as i32 {
-            log::debug!("Handling `broadcast_event`");
-
-            let actual_event = event.data.get(0).unwrap();
-
-            for (_fd, mut stream) in self.nodes.iter() {
-                stream.write(actual_event).unwrap();
-            }
+            self.handle_broadcast_event(event)?;
         }
 
         // Send a response to a client
         else if event.kind == proto_msg::event::Kind::RespondClient as i32 {
-            log::debug!("Handling `respond_client`");
-
-            let actual_event = event.data.get(0).unwrap();
-
-            let first_arg = event.meta.get(0).unwrap();
-            let client_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
-
-            // Client may be already disconnected
-            let mut client_stream = self.clients.get(&client_fd).unwrap();
-
-            client_stream.write(actual_event).unwrap();
+            self.handle_respond_client(event)?;
         }
 
         else {
@@ -373,6 +272,227 @@ impl Server {
         Ok(())
     }
 
+    fn handle_new_stream_event_server(&mut self, fd: i32) -> Result<(), ServerError> {
+        log::debug!("Handling `new_stream_event` from server");
+
+        let listener = self.servers.get(&fd).unwrap();
+
+        match listener.accept() {
+            Ok((mut stream, addr)) => {
+                // Getting stream's fd
+                let new_fd = stream.as_raw_fd();
+
+                // Handshake
+                let message = utils::read_full_stream(&mut stream).unwrap();
+                let events = event::deserialize(&message).unwrap();
+                // Assuming we will get only one event
+                let handshake_event = events.get(0).unwrap();
+
+                let mut handshake_ok = true;
+                if handshake_event.kind == proto_msg::event::Kind::MarkMeClient as i32 {
+                    log::info!("New client connected {}", addr);
+                    self.clients.insert(new_fd, stream);
+                }
+
+                else if handshake_event.kind == proto_msg::event::Kind::MarkMeNode as i32 {
+                    {
+                        let mut nodes_ips = self.nodes_ips.lock().unwrap();
+
+                        if !nodes_ips.contains_key(&addr.ip()) {
+                            log::info!("New node connected {}", addr);
+                            self.nodes.insert(new_fd, stream);
+                            nodes_ips.insert(addr.ip(), fd);
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                else {
+                    stream.shutdown(Shutdown::Both).unwrap();
+                    handshake_ok = false;
+                }
+
+                if handshake_ok {
+                    // Notify `listener` thread about new fd
+                    self.listener_event_channel_tx.send(proto_msg::Event {
+                        dir: None,
+                        dest: None,
+                        kind: proto_msg::event::Kind::NewFd as i32,
+                        data: vec![new_fd.to_ne_bytes().to_vec()],
+                        meta: vec![]
+                    }).unwrap();
+                } else {
+                    log::warn!("Handshake failed");
+                }
+            },
+            Err(error) => {
+                log::warn!("Couldn't accept new connection: {}", error);
+            }
+        };
+
+        Ok(())
+    }
+
+    fn handle_new_stream_event_client(&mut self, fd: i32) -> Result<(), ServerError> {
+        log::debug!("Handling `new_stream_event` from client");
+
+        let stream = self.clients.get_mut(&fd).unwrap();
+
+        // Getting sent events
+        let message = utils::read_full_stream(stream).unwrap();
+        if message.len() != 0 {
+            log::info!("Received new {}-bytes message from the client", message.len());
+
+            // Parsing events and sending them to main
+            let events = event::deserialize(&message).unwrap();
+            for event in events {
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: Some(proto_msg::event::Dest::PluginMan as i32),
+                    kind: event.kind,
+                    data: event.data,
+                    meta: vec![fd.to_ne_bytes().to_vec()]
+                };
+
+                self.main_event_channel_tx.send(event).unwrap();
+            }
+        }
+
+        else {
+            log::info!("Client disconnected {}", stream.peer_addr().unwrap());
+
+            // Disconnecting client
+            stream.shutdown(Shutdown::Both).unwrap();
+            self.clients.remove(&fd);
+
+            // Notify `listener` thread about old fd
+            self.listener_event_channel_tx.send(proto_msg::Event {
+                dir: None,
+                dest: None,
+                kind: proto_msg::event::Kind::OldFd as i32,
+                data: vec![fd.to_ne_bytes().to_vec()],
+                meta: vec![]
+            }).unwrap();
+        }
+
+        Ok(())
+    }
+
+    fn handle_new_stream_event_node(&mut self, fd: i32) -> Result<(), ServerError> {
+        log::debug!("Handling `new_stream_event` from node");
+
+        let stream = self.nodes.get_mut(&fd).unwrap();
+
+        // Getting sent events
+        let message = utils::read_full_stream(stream).unwrap();
+        if message.len() != 0 {
+            log::info!("Received new {}-bytes message from the node", message.len());
+
+            // Parsing events and sending them to main
+            let events = event::deserialize(&message).unwrap();
+            for event in events {
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: Some(proto_msg::event::Dest::Node as i32),
+                    kind: event.kind,
+                    data: event.data,
+                    meta: vec![fd.to_ne_bytes().to_vec()]
+                };
+
+                self.main_event_channel_tx.send(event).unwrap();
+            }
+        }
+
+        else {
+            log::info!("Node disconnected {}", stream.peer_addr().unwrap());
+
+            // Disconnecting node
+            let addr = stream.peer_addr().unwrap();
+            stream.shutdown(Shutdown::Both).unwrap();
+            self.nodes.remove(&fd);
+
+            {
+                let mut nodes_ips = self.nodes_ips.lock().unwrap();
+                nodes_ips.remove(&addr.ip());
+            }
+
+            // Notify `listener` thread about old client
+            self.listener_event_channel_tx.send(proto_msg::Event {
+                dir: None,
+                dest: None,
+                kind: proto_msg::event::Kind::OldFd as i32,
+                data: vec![fd.to_ne_bytes().to_vec()],
+                meta: vec![]
+            }).unwrap();
+        }
+
+        Ok(())
+    }
+
+    fn handle_new_stream(&mut self) -> Result<(), ServerError> {
+        log::debug!("Handling `new_stream`");
+
+        // Connecting new node
+        let stream = self.stream_channel_rx.recv().unwrap();
+        let addr = stream.peer_addr().unwrap();
+
+        log::info!("New node connected {}", addr);
+
+        let fd = stream.as_raw_fd();
+        self.nodes.insert(fd, stream);
+        {
+            let mut nodes_ips = self.nodes_ips.lock().unwrap();
+            nodes_ips.insert(addr.ip(), fd);
+        }
+
+        // Notify `listener` thread about new client
+        self.listener_event_channel_tx.send(proto_msg::Event {
+            dir: None,
+            dest: None,
+            kind: proto_msg::event::Kind::NewFd as i32,
+            data: vec![fd.to_ne_bytes().to_vec()],
+            meta: vec![]
+        }).unwrap();
+
+        Ok(())
+    }
+
+    fn handle_broadcast_event(&mut self, event: proto_msg::Event) -> Result<(), ServerError> {
+        log::debug!("Handling `broadcast_event`");
+
+        let actual_event = event.data.get(0).unwrap();
+
+        for (_fd, mut stream) in self.nodes.iter() {
+            stream.write(actual_event).unwrap();
+        }
+
+        Ok(())
+    }
+
+    fn handle_respond_client(&mut self, event: proto_msg::Event) -> Result<(), ServerError> {
+        log::debug!("Handling `respond_client`");
+
+        let first_arg = event.meta.get(0).unwrap();
+        let client_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
+
+        // TODO: Add check for client being already disconnected
+        let mut client_stream = self.clients.get(&client_fd).unwrap();
+
+        // Removing meta information
+        let event = proto_msg::Event {
+            dir: event.dir,
+            dest: event.dest,
+            kind: event.kind,
+            data: event.data,
+            meta: vec![]
+        };
+
+        client_stream.write(&event::serialize(event)).unwrap();
+
+        Ok(())
+    }
+
     fn t_listener(listener_rx: mpsc::Receiver<proto_msg::Event>,
                   server_tx: mpsc::Sender<proto_msg::Event>) {
         log::debug!("Listener thread started");
@@ -380,39 +500,28 @@ impl Server {
         let mut readfds_vec = vec![];
 
         loop {
-            // Wait for events from other thread
-            let mut incoming_events: Vec<proto_msg::Event> = vec![];
+            // Handling events from other thread
             loop {
                 let timeout = time::Duration::from_millis(100);
-                match listener_rx.recv_timeout(timeout) {
-                    Ok(event) => {
-                        incoming_events.push(event);
+                if let Ok(event) = listener_rx.recv_timeout(timeout) {
+                    let bytes = event.data.get(0).unwrap();
+                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
+
+                    if event.kind == proto_msg::event::Kind::NewFd as i32 {
+                        readfds_vec.push(fd);
                     }
-                    Err(_) => break
-                }
-            }
 
-            // Handle received events
-            for event in incoming_events {
-                if event.kind == proto_msg::event::Kind::NewFd as i32 {
-                    let bytes = event.data.get(0).unwrap();
-                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
-                    readfds_vec.push(fd);
-                }
-
-                if event.kind == proto_msg::event::Kind::OldFd as i32 {
-                    let bytes = event.data.get(0).unwrap();
-                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
-
-                    let mut fd_index = 0;
-                    for i in 0..readfds_vec.len() {
-                        if *readfds_vec.get(i).unwrap() == fd {
-                            fd_index = i;
-                            break;
+                    else if event.kind == proto_msg::event::Kind::OldFd as i32 {
+                        let mut fd_index = 0;
+                        for i in 0..readfds_vec.len() {
+                            if *readfds_vec.get(i).unwrap() == fd {
+                                fd_index = i;
+                                break;
+                            }
                         }
+                        readfds_vec.remove(fd_index);
                     }
-                    readfds_vec.remove(fd_index);
-                }
+                } else { break }
             }
 
             // Update set of fds to be read
@@ -444,53 +553,61 @@ impl Server {
     }
 
     fn t_scanner(server_event_tx: mpsc::Sender<proto_msg::Event>,
-				 server_stream_tx: mpsc::Sender<TcpStream>) {
+				 server_stream_tx: mpsc::Sender<TcpStream>,
+                 known_nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>) {
+        log::debug!("Scanner thread started");
 
-        // Get this machine ips (to not ping them)
-        let local_ips = utils::get_ipv4_ips();
-
-        // Get proper interfaces
-        for (network, _mask) in utils::get_networks_and_masks().iter() {
-            // Get octets of networks
-            if !network.is_ipv4() {
-                continue;
-            }
-
-            // TODO: Add proper check
-            let octets = utils::get_octets(network).unwrap();
-
-            // Ping all avaliable IPs (not really, but OK for MVP)
-            for i in 0..255 {
-                let ip = IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], i));
-
-                // We dont want to ping ourselves
-                if local_ips.contains(&ip) {
-                    // TODO: remove comment. Only for one-machine testing
-                    // continue;
+        loop {
+            let local_ips = utils::get_ipv4_ips();
+            for (network, _mask) in utils::get_networks_and_masks().iter() {
+                if !network.is_ipv4() {
+                    continue;
                 }
 
-                // TODO: 32001 -> 32000. Only for one-machine testing
-                let socket_address = SocketAddr::new(ip, 32001);
-                let stream = TcpStream::connect_timeout(
-                    &socket_address,
-                    time::Duration::from_millis(100)
-                );
+                let octets = utils::get_octets(network).unwrap();
 
-                match stream {
-                    Ok(stream) => {
-                        // Send stream of client that responded
-						server_stream_tx.send(stream).unwrap();
-						// Notify server, that new client detected
-						server_event_tx.send(proto_msg::Event {
-							dir: Some(proto_msg::event::Dir::Incoming as i32),
-                            dest: None,
-							kind: proto_msg::event::Kind::NewStream as i32,
-							data: vec![],
-                            meta: vec![]
-						}).unwrap();
-                    },
-                    Err(_) => {
-                        // Doing nothing, this situation is perfectly OK
+                // Ping all avaliable IPs (not really, but OK for MVP)
+                for i in 0..255 {
+                    let ip = IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], i));
+                    {
+                        let known_nodes_ips = known_nodes_ips.lock().unwrap();
+                        if local_ips.contains(&ip) || known_nodes_ips.contains_key(&ip) {
+                            continue;
+                        }
+                    }
+
+                    let socket_address = SocketAddr::new(ip, 32000);
+                    let stream = TcpStream::connect_timeout(
+                        &socket_address,
+                        time::Duration::from_millis(100)
+                    );
+
+                    match stream {
+                        Ok(mut stream) => {
+                            // MarkMeNode
+                            let event = proto_msg::Event {
+                                dir: None,
+                                dest: None,
+                                kind: proto_msg::event::Kind::MarkMeNode as i32,
+                                data: vec![],
+                                meta: vec![]
+                            };
+                            stream.write(&event::serialize(event)).unwrap();
+
+                            // Send stream of client that responded
+                            server_stream_tx.send(stream).unwrap();
+                            // Notify server, that new node detected
+                            server_event_tx.send(proto_msg::Event {
+                                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                                dest: None,
+                                kind: proto_msg::event::Kind::NewStream as i32,
+                                data: vec![],
+                                meta: vec![]
+                            }).unwrap();
+                        },
+                        Err(_) => {
+                            // Doing nothing, this situation is perfectly OK
+                        }
                     }
                 }
             }

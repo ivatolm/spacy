@@ -143,7 +143,7 @@ impl PluginMan {
                         meta: event_meta
                     };
 
-                    self.fsm.push_event(event_with_meta);
+                    self.fsm.push_front_event(event_with_meta);
                 }
             }
         }
@@ -155,7 +155,7 @@ impl PluginMan {
     fn handle_event(&mut self) -> Result<(), PluginManError> {
         log::debug!("State `handle_event`");
 
-        let event = match self.fsm.pop_event() {
+        let event = match self.fsm.pop_front_event() {
             Some(event) => event,
             None => {
                 self.fsm.transition(1)?;
@@ -164,7 +164,6 @@ impl PluginMan {
         };
         let event_direction = event.dir;
         self.fsm.push_front_event(event);
-
 
         // Handling event based on it's direction
         if let Some(dir) = event_direction {
@@ -191,7 +190,7 @@ impl PluginMan {
     fn handle_incoming_event(&mut self) -> Result<(), PluginManError> {
         log::debug!("State `handle_incoming_event`");
 
-        let event = self.fsm.pop_event().unwrap();
+        let event = self.fsm.pop_front_event().unwrap();
         let mut events_to_main = vec![];
 
         if event.kind == proto_msg::event::Kind::NewPlugin as i32 {
@@ -320,7 +319,7 @@ impl PluginMan {
     fn handle_outcoming_event(&mut self) -> Result<(), PluginManError> {
         log::debug!("State `handle_outcoming_event`");
 
-        let event = self.fsm.pop_event().unwrap();
+        let event = self.fsm.pop_front_event().unwrap();
         let mut events_to_main = vec![];
 
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
