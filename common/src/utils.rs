@@ -44,6 +44,10 @@ pub fn i32_from_ne_bytes(bytes: &[u8]) -> Result<i32, std::array::TryFromSliceEr
     Ok(i32::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
 }
 
+pub fn usize_from_ne_bytes(bytes: &[u8]) -> Result<usize, std::array::TryFromSliceError> {
+    Ok(usize::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
+}
+
 pub fn read_full_stream(stream: &mut std::net::TcpStream) -> Result<Vec<u8>, std::io::Error> {
     let mut message = vec![];
     let mut buf = [0u8; 1024];

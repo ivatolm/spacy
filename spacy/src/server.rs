@@ -243,6 +243,11 @@ impl Server {
             self.handle_broadcast_event(event)?;
         }
 
+        // Approving transaction
+        else if event.kind == proto_msg::event::Kind::ApproveTransaction as i32 {
+            self.handle_approve_transaction(event)?;
+        }
+
         // Send a response to a client
         else if event.kind == proto_msg::event::Kind::RespondClient as i32 {
             self.handle_respond_client(event)?;
@@ -302,6 +307,16 @@ impl Server {
                             log::info!("New node connected {}", addr);
                             self.nodes.insert(new_fd, stream);
                             nodes_ips.insert(addr.ip(), fd);
+
+                            // Notify `node` about new connection
+                            self.main_event_channel_tx.send(proto_msg::Event {
+                                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                                dest: Some(proto_msg::event::Dest::Node as i32),
+                                kind: proto_msg::event::Kind::UpdateNodeCount as i32,
+                                data: vec![self.nodes.len().to_ne_bytes().to_vec()],
+                                meta: vec![]
+                            }).unwrap();
+
                         } else {
                             return Ok(());
                         }
@@ -417,6 +432,15 @@ impl Server {
                 nodes_ips.remove(&addr.ip());
             }
 
+            // Notify `node` about new connection
+            self.main_event_channel_tx.send(proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: Some(proto_msg::event::Dest::Node as i32),
+                kind: proto_msg::event::Kind::UpdateNodeCount as i32,
+                data: vec![self.nodes.len().to_ne_bytes().to_vec()],
+                meta: vec![]
+            }).unwrap();
+
             // Notify `listener` thread about old client
             self.listener_event_channel_tx.send(proto_msg::Event {
                 dir: None,
@@ -446,6 +470,15 @@ impl Server {
             nodes_ips.insert(addr.ip(), fd);
         }
 
+        // Notify `node` about new connection
+        self.main_event_channel_tx.send(proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Incoming as i32),
+            dest: Some(proto_msg::event::Dest::Node as i32),
+            kind: proto_msg::event::Kind::UpdateNodeCount as i32,
+            data: vec![self.nodes.len().to_ne_bytes().to_vec()],
+            meta: vec![]
+        }).unwrap();
+
         // Notify `listener` thread about new client
         self.listener_event_channel_tx.send(proto_msg::Event {
             dir: None,
@@ -466,6 +499,29 @@ impl Server {
         for (_fd, mut stream) in self.nodes.iter() {
             stream.write(actual_event).unwrap();
         }
+
+        Ok(())
+    }
+
+    fn handle_approve_transaction(&mut self, event: proto_msg::Event) -> Result<(), ServerError> {
+        log::debug!("Handling `approve_transaction`");
+
+        let bytes = event.meta.get(0).unwrap();
+        let node_fd = utils::i32_from_ne_bytes(bytes).unwrap();
+
+        // TODO: Add check for node being already disconnected
+        let mut node_stream = self.nodes.get(&node_fd).unwrap();
+
+        // Removing meta information
+        let event = proto_msg::Event {
+            dir: event.dir,
+            dest: event.dest,
+            kind: event.kind,
+            data: event.data,
+            meta: vec![]
+        };
+
+        node_stream.write(&event::serialize(event)).unwrap();
 
         Ok(())
     }
