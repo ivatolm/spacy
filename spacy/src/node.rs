@@ -127,25 +127,8 @@ impl Node {
 
         let event = self.fsm.pop_front_event().unwrap();
 
-        // Receive new version and update
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-            log::debug!("Handling `update_shared_memory`");
-
-            let version_bytes = event.data.get(0).unwrap();
-            let key_bytes = event.data.get(1).unwrap();
-            let value_bytes = event.data.get(2).unwrap();
-
-            // Parsing update's data
-            let version = utils::u128_from_ne_bytes(version_bytes).unwrap();
-            let key = utils::i32_from_ne_bytes(key_bytes).unwrap();
-            let value = value_bytes.to_vec();
-
-            // If received version is actually newer than local
-            if version > self.shared_memory_version {
-                // Updating local shared memory
-                self.shared_memory.insert(key, value);
-                self.shared_memory_version = version;
-            }
+            self.handle_update_shared_memory_incoming(event)?;
         }
 
         else {
@@ -160,78 +143,17 @@ impl Node {
         log::debug!("State `handle_outcoming_event`");
 
         let event = self.fsm.pop_front_event().unwrap();
-        let mut events_to_main = vec![];
 
-        // Update and send new version
         if event.kind == proto_msg::event::Kind::UpdateSharedMemory as i32 {
-            log::debug!("Handling `update_shared_memory`");
-
-            // Parsing received update
-            let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
-            let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();
-            let value = event.data.get(1).unwrap().to_vec();
-
-            // Updating local shared memory
-            self.shared_memory.insert(key, value.clone());
-            self.shared_memory_version = version;
-
-            // Creating update event
-            let actual_event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: None,
-                kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
-                data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value],
-                meta: vec![]
-            };
-
-            // Propagating update event to other nodes
-            let broadcast_event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Outcoming as i32),
-                dest: Some(proto_msg::event::Dest::Server as i32),
-                kind: proto_msg::event::Kind::BroadcastEvent as i32,
-                data: vec![event::serialize(actual_event)],
-                meta: vec![]
-            };
-
-            events_to_main.push(broadcast_event);
+            self.handle_update_shared_memory_outcoming(event)?;
         }
 
         else if event.kind == proto_msg::event::Kind::GetFromSharedMemory as i32 {
-            log::debug!("Returning value from shared memory");
-
-            let first_arg = event.data.get(0).unwrap();
-
-            // Parsing event
-            let key = utils::i32_from_ne_bytes(first_arg).unwrap();
-
-            // Returning value if key is valid
-            let data;
-            if self.shared_memory.contains_key(&key) {
-                let value = self.shared_memory.get(&key).unwrap();
-                data = vec![value.to_vec()];
-            } else {
-                data = vec![];
-            }
-
-            // Creating event for response
-            let event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: Some(proto_msg::event::Dest::PluginMan as i32),
-                kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
-                data,
-                meta: event.meta
-            };
-
-            events_to_main.push(event);
+            self.handle_get_from_shared_memory(event)?;
         }
 
         else {
             log::warn!("Received event with unknown kind: {}", event.kind);
-        }
-
-        // Send events to main
-        for event in events_to_main {
-            self.main_event_channel_tx.send(event).unwrap();
         }
 
         self.fsm.transition(1)?;
@@ -240,6 +162,94 @@ impl Node {
 
     fn stop(&mut self) -> Result<(), NodeError> {
         log::debug!("State `stop`");
+
+        Ok(())
+    }
+
+    fn handle_update_shared_memory_incoming(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
+        log::debug!("Handling `update_shared_memory`");
+
+        let version_bytes = event.data.get(0).unwrap();
+        let key_bytes = event.data.get(1).unwrap();
+        let value_bytes = event.data.get(2).unwrap();
+
+        // Parsing update's data
+        let version = utils::u128_from_ne_bytes(version_bytes).unwrap();
+        let key = utils::i32_from_ne_bytes(key_bytes).unwrap();
+        let value = value_bytes.to_vec();
+
+        // If received version is actually newer than local
+        if version > self.shared_memory_version {
+            // Updating local shared memory
+            self.shared_memory.insert(key, value);
+            self.shared_memory_version = version;
+        }
+
+        Ok(())
+    }
+
+    fn handle_update_shared_memory_outcoming(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
+        log::debug!("Handling `update_shared_memory`");
+
+        // Parsing received update
+        let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
+        let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();
+        let value = event.data.get(1).unwrap().to_vec();
+
+        // Updating local shared memory
+        self.shared_memory.insert(key, value.clone());
+        self.shared_memory_version = version;
+
+        // Creating update event
+        let actual_event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Incoming as i32),
+            dest: None,
+            kind: proto_msg::event::Kind::UpdateSharedMemory as i32,
+            data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value],
+            meta: vec![]
+        };
+
+        // Propagating update event to other nodes
+        let broadcast_event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Outcoming as i32),
+            dest: Some(proto_msg::event::Dest::Server as i32),
+            kind: proto_msg::event::Kind::BroadcastEvent as i32,
+            data: vec![event::serialize(actual_event)],
+            meta: vec![]
+        };
+
+        self.main_event_channel_tx.send(broadcast_event).unwrap();
+
+        Ok(())
+    }
+
+    fn handle_get_from_shared_memory(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
+        log::debug!("Returning value from shared memory");
+
+        let first_arg = event.data.get(0).unwrap();
+
+        // Parsing event
+        let key = utils::i32_from_ne_bytes(first_arg).unwrap();
+
+        // Returning value if key is valid
+        let data;
+        if self.shared_memory.contains_key(&key) {
+            let value = self.shared_memory.get(&key).unwrap();
+            data = vec![value.to_vec()];
+        } else {
+            data = vec![];
+        }
+
+        // Creating event for response
+        let event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Incoming as i32),
+            dest: Some(proto_msg::event::Dest::PluginMan as i32),
+            kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
+            data,
+            meta: event.meta
+        };
+
+        self.main_event_channel_tx.send(event).unwrap();
 
         Ok(())
     }
