@@ -407,12 +407,16 @@ impl Server {
             // Parsing events and sending them to main
             let events = event::deserialize(&message).unwrap();
             for event in events {
+                // Adding fd to event's meta information
+                let mut meta = event.meta;
+                meta.insert(0, fd.to_ne_bytes().to_vec());
+
                 let event = proto_msg::Event {
                     dir: Some(proto_msg::event::Dir::Incoming as i32),
                     dest: Some(proto_msg::event::Dest::Node as i32),
                     kind: event.kind,
                     data: event.data,
-                    meta: vec![fd.to_ne_bytes().to_vec()]
+                    meta
                 };
 
                 self.main_event_channel_tx.send(event).unwrap();
@@ -432,7 +436,7 @@ impl Server {
                 nodes_ips.remove(&addr.ip());
             }
 
-            // Notify `node` about new connection
+            // Notify `node` about old connection
             self.main_event_channel_tx.send(proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: Some(proto_msg::event::Dest::Node as i32),
@@ -509,6 +513,8 @@ impl Server {
         let bytes = event.meta.get(0).unwrap();
         let node_fd = utils::i32_from_ne_bytes(bytes).unwrap();
 
+        let meta = (&event.meta[1..]).to_vec();
+
         // TODO: Add check for node being already disconnected
         let mut node_stream = self.nodes.get(&node_fd).unwrap();
 
@@ -518,7 +524,7 @@ impl Server {
             dest: event.dest,
             kind: event.kind,
             data: event.data,
-            meta: vec![]
+            meta
         };
 
         node_stream.write(&event::serialize(event)).unwrap();
@@ -532,6 +538,8 @@ impl Server {
         let first_arg = event.meta.get(0).unwrap();
         let client_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
 
+        let meta = (&event.meta[1..]).to_vec();
+
         // TODO: Add check for client being already disconnected
         let mut client_stream = self.clients.get(&client_fd).unwrap();
 
@@ -541,7 +549,7 @@ impl Server {
             dest: event.dest,
             kind: event.kind,
             data: event.data,
-            meta: vec![]
+            meta
         };
 
         client_stream.write(&event::serialize(event)).unwrap();

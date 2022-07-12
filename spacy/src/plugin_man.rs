@@ -204,6 +204,10 @@ impl PluginMan {
             self.handle_get_from_shared_memory_incoming(event)?;
         }
 
+        else if event.kind == proto_msg::event::Kind::TransactionSucceeded as i32 {
+            self.handle_transaction_succeeded(event)?;
+        }
+
         else if event.kind == proto_msg::event::Kind::TransactionFailed as i32 {
             self.handle_transaction_failed(event)?;
         }
@@ -351,12 +355,34 @@ impl PluginMan {
         // Getting plugin's stream
         let stream = self.plugins_streams.get_mut(&plugin_fd).unwrap();
 
-        log::warn!("{:?}", event.data);
-
         let event = proto_msg::Event {
             dir: Some(proto_msg::event::Dir::Incoming as i32),
             dest: None,
             kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
+            data: event.data,
+            meta: vec![]
+        };
+
+        // Sending an event to the plugin
+        stream.write(&event::serialize(event)).unwrap();
+
+        Ok(())
+    }
+
+    fn handle_transaction_succeeded(&mut self, event: proto_msg::Event) -> Result<(), PluginManError> {
+        log::debug!("Handling `transaction_approved`");
+
+        // Parsing event data
+        let first_arg = event.meta.get(0).unwrap();
+        let plugin_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
+
+        // Getting plugin's stream
+        let stream = self.plugins_streams.get_mut(&plugin_fd).unwrap();
+
+        let event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Incoming as i32),
+            dest: None,
+            kind: proto_msg::event::Kind::TransactionSucceeded as i32,
             data: event.data,
             meta: vec![]
         };

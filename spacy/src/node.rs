@@ -15,11 +15,12 @@ pub struct Node {
     shared_memory: HashMap<i32, Vec<u8>>,
     shared_memory_version: u128,
     node_id: u128,
-    nodes_count: usize,
+    nodes_count: i32,
 
     in_transaction: bool,
     transaction_event: Option<proto_msg::Event>,
-    transaction_approvals: usize,
+    transaction_approvals: i32,
+    transaction_nodes_count: i32,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
@@ -54,6 +55,7 @@ impl Node {
 
         // Generating node id
         let node_id = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
+        log::debug!("Node_id: {}", node_id);
 
         Self {
             fsm,
@@ -67,6 +69,7 @@ impl Node {
             in_transaction: false,
             transaction_event: None,
             transaction_approvals: 0,
+            transaction_nodes_count: 0,
 
             main_event_channel_tx
         }
@@ -155,6 +158,7 @@ impl Node {
         }
 
         else if event.kind == proto_msg::event::Kind::CommitTransaction as i32 {
+            log::info!("Received transaction commit, performing transaction");
             self.handle_perform_transaction(event)?;
         }
 
@@ -197,47 +201,19 @@ impl Node {
         log::debug!("Handling `update_node_count`");
 
         let bytes = event.data.get(0).unwrap();
-        self.nodes_count = utils::usize_from_ne_bytes(bytes).unwrap();
-
-        Ok(())
-    }
-
-    fn handle_update_shared_memory_outcoming(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
-        log::debug!("Handling `update_shared_memory`");
-
-        // Parsing received update
-        let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
-        let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();
-        let value = event.data.get(1).unwrap().to_vec();
+        self.nodes_count = utils::usize_from_ne_bytes(bytes).unwrap() as i32;
 
         if self.in_transaction {
-            log::debug!("Transaction failed: already in transaction");
+            // Node disconnected, so we will get less approvals
+            if self.nodes_count < self.transaction_nodes_count {
+                self.transaction_nodes_count = self.nodes_count;
 
-            let plugin_response_event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: Some(proto_msg::event::Dest::PluginMan as i32),
-                kind: proto_msg::event::Kind::TransactionFailed as i32,
-                data: vec![],
-                meta: event.meta
-            };
-
-            self.main_event_channel_tx.send(plugin_response_event).unwrap();
-
-            return Ok(());
-        }
-
-        else {
-            self.in_transaction = true;
-            self.transaction_event = Some(proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: None,
-                kind: proto_msg::event::Kind::CommitTransaction as i32,
-                data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value],
-                meta: vec![]
-            });
-
-            // Requesting transaction
-            self.handle_request_transaction_outcoming()?;
+                // Maybe it's just enough now
+                self.transaction_approvals -= 1; // function does +1, so -1 here
+                self.handle_approve_transaction()?;
+            }
+        } else {
+            self.transaction_nodes_count = self.nodes_count;
         }
 
         Ok(())
@@ -274,17 +250,64 @@ impl Node {
         Ok(())
     }
 
+    fn handle_update_shared_memory_outcoming(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
+        log::debug!("Handling `update_shared_memory`");
+
+        log::info!("Outcoming transaction request");
+
+        // Parsing received update
+        let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
+        let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();
+        let value = event.data.get(1).unwrap().to_vec();
+
+        if self.in_transaction {
+            log::info!("Request rejected: already in transaction");
+
+            let plugin_response_event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: Some(proto_msg::event::Dest::PluginMan as i32),
+                kind: proto_msg::event::Kind::TransactionFailed as i32,
+                data: vec![],
+                meta: event.meta
+            };
+
+            self.main_event_channel_tx.send(plugin_response_event).unwrap();
+
+            return Ok(());
+        }
+
+        else {
+            log::info!("Request approved");
+
+            self.in_transaction = true;
+            self.transaction_event = Some(proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: None,
+                kind: proto_msg::event::Kind::CommitTransaction as i32,
+                data: vec![version.to_ne_bytes().to_vec(), key.to_ne_bytes().to_vec(), value],
+                meta: event.meta
+            });
+
+            // Requesting transaction
+            self.handle_request_transaction_outcoming()?;
+        }
+
+        Ok(())
+    }
+
     fn handle_request_transaction_incoming(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
         log::debug!("Handling `request_transaction`");
 
         // Transaction collision
         if self.in_transaction {
+            log::info!("Transaction collision occured");
+
             let bytes = event.meta.get(1).unwrap();
             let node_id = utils::u128_from_ne_bytes(bytes).unwrap();
 
             // Other node will perform
             if node_id > self.node_id {
-                log::debug!("Local transaction was dropped");
+                log::info!("Local transaction was rejected");
 
                 let meta = event.meta.get(0).unwrap();
                 let node_response_event = proto_msg::Event {
@@ -311,12 +334,16 @@ impl Node {
 
                 self.main_event_channel_tx.send(plugin_response_event).unwrap();
 
-                self.in_transaction = false;
                 self.transaction_event = None;
+                self.transaction_approvals = 0;
+            } else {
+                log::info!("Local transaction was approved");
             }
         }
 
         else {
+            log::info!("Incoming transaction request");
+
             self.in_transaction = true;
 
             let meta = event.meta.get(0).unwrap();
@@ -337,13 +364,15 @@ impl Node {
     fn handle_request_transaction_outcoming(&mut self) -> Result<(), NodeError> {
         log::debug!("Handling `request_transaction`");
 
+        log::info!("Broadcasting new transaction request");
+
         // Requesting transaction event
         let actual_event = proto_msg::Event {
             dir: Some(proto_msg::event::Dir::Incoming as i32),
             dest: None,
             kind: proto_msg::event::Kind::RequestTransaction as i32,
             data: vec![],
-            meta: vec![]
+            meta: vec![self.node_id.to_ne_bytes().to_vec()]
         };
 
         // Propagating to other nodes
@@ -352,10 +381,14 @@ impl Node {
             dest: Some(proto_msg::event::Dest::Server as i32),
             kind: proto_msg::event::Kind::BroadcastEvent as i32,
             data: vec![event::serialize(actual_event)],
-            meta: vec![self.node_id.to_ne_bytes().to_vec()]
+            meta: vec![]
         };
 
         self.main_event_channel_tx.send(broadcast_event).unwrap();
+
+        log::info!("Waiting for approvals");
+        self.transaction_approvals -= 1;
+        self.handle_approve_transaction()?;
 
         Ok(())
     }
@@ -364,19 +397,36 @@ impl Node {
         log::debug!("Handling `approve_transaction`");
 
         self.transaction_approvals += 1;
-        if self.transaction_approvals >= self.nodes_count {
-            let transaction_event = self.transaction_event.clone();
+        log::info!("Total transaction approvals: {} / {}", self.transaction_approvals, self.transaction_nodes_count);
+        if self.transaction_approvals >= self.transaction_nodes_count {
+            log::info!("Performing transaction");
 
+            let transaction_event = self.transaction_event.clone();
             let transaction_event = transaction_event.as_ref().unwrap();
+
             self.handle_perform_transaction(transaction_event.clone())?;
-            self.transaction_approvals = 0;
+
+            let mut transaction_event_clone = transaction_event.clone();
+
+            // Notifing local plugin about success
+            let plugin_response_event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: Some(proto_msg::event::Dest::PluginMan as i32),
+                kind: proto_msg::event::Kind::TransactionSucceeded as i32,
+                data: vec![],
+                meta: transaction_event_clone.meta.clone()
+            };
+            self.main_event_channel_tx.send(plugin_response_event).unwrap();
 
             // Propagating to other nodes
+
+            // Removing meta information
+            transaction_event_clone.meta = (&transaction_event_clone.meta[1..]).to_vec();
             let broadcast_event = proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Outcoming as i32),
                 dest: Some(proto_msg::event::Dest::Server as i32),
                 kind: proto_msg::event::Kind::BroadcastEvent as i32,
-                data: vec![event::serialize(transaction_event.clone())],
+                data: vec![event::serialize(transaction_event_clone)],
                 meta: vec![self.node_id.to_ne_bytes().to_vec()]
             };
 
@@ -405,6 +455,9 @@ impl Node {
 
         self.in_transaction = false;
         self.transaction_event = None;
+        self.transaction_approvals = 0;
+
+        self.transaction_nodes_count = self.nodes_count;
 
         Ok(())
     }

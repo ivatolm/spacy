@@ -30,10 +30,11 @@ message Event {
         RESPOND_CLIENT = 11;
         REQUEST_TRANSACTION = 12;
         APPROVE_TRANSACTION = 13;
-        TRANSACTION_FAILED = 14;
-        COMMIT_TRANSACTION = 15;
-        UPDATE_NODE_COUNT = 16;
-        RESPOND_NODE = 17;
+        TRANSACTION_SUCCEEDED = 14;
+        TRANSACTION_FAILED = 15;
+        COMMIT_TRANSACTION = 16;
+        UPDATE_NODE_COUNT = 17;
+        RESPOND_NODE = 18;
     }
 
     optional Dir dir = 1;
