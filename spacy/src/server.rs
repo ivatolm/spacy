@@ -4,7 +4,7 @@ use std::{
     os::unix::prelude::AsRawFd,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time, io::Write
+    time, io::{Write, Read}
 };
 use nix::sys::{
     select::{select, FdSet},
@@ -25,9 +25,12 @@ pub struct Server {
     clients: HashMap<i32, TcpStream>,
     nodes: HashMap<i32, TcpStream>,
     nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>,
+    nodes_ids: HashMap<u128, i32>,
     listener_event_channel_tx: mpsc::Sender<proto_msg::Event>,
     listener_handle: thread::JoinHandle<()>,
     scanner_handle: thread::JoinHandle<()>,
+
+    node_id: u128,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
@@ -43,7 +46,7 @@ impl Server {
     // 3 - handling outcoming event
     // 4 - stop
 
-    pub fn new(main_event_channel_tx: mpsc::Sender<proto_msg::Event>) -> Self {
+    pub fn new(main_event_channel_tx: mpsc::Sender<proto_msg::Event>, node_id: u128) -> Self {
         let fsm = FSM::new(0, HashMap::from([
             (0, vec![1, 4]),
             (1, vec![2, 3, 4]),
@@ -74,7 +77,8 @@ impl Server {
 		let scanner_handle = thread::spawn(move || {
 			Self::t_scanner(server_event_channel_tx,
                             scanner_stream_channel_tx,
-                            known_nodes_ips);
+                            known_nodes_ips,
+                            node_id);
 		});
 
         Self {
@@ -86,9 +90,12 @@ impl Server {
             clients: HashMap::new(),
             nodes: HashMap::new(),
             nodes_ips,
+            nodes_ids: HashMap::new(),
             listener_event_channel_tx,
             listener_handle,
 			scanner_handle,
+
+            node_id,
 
             main_event_channel_tx
         }
@@ -222,7 +229,7 @@ impl Server {
 
         // If we got new event from `scanner` thread
         else if event.kind == proto_msg::event::Kind::NewStream as i32 {
-            self.handle_new_stream()?;
+            self.handle_new_stream(event)?;
         }
 
         else {
@@ -305,18 +312,33 @@ impl Server {
 
                         if !nodes_ips.contains_key(&addr.ip()) {
                             log::info!("New node connected {}", addr);
-                            self.nodes.insert(new_fd, stream);
-                            nodes_ips.insert(addr.ip(), fd);
 
                             // Notify `node` about new connection
                             self.main_event_channel_tx.send(proto_msg::Event {
                                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                                 dest: Some(proto_msg::event::Dest::Node as i32),
-                                kind: proto_msg::event::Kind::UpdateNodeCount as i32,
-                                data: vec![self.nodes.len().to_ne_bytes().to_vec()],
+                                kind: proto_msg::event::Kind::NodeConnected as i32,
+                                data: handshake_event.data.clone(),
                                 meta: vec![]
                             }).unwrap();
 
+                            // Respond with this node id
+                            let event = proto_msg::Event {
+                                dir: None,
+                                dest: None,
+                                kind: 0,
+                                data: vec![self.node_id.to_ne_bytes().to_vec()],
+                                meta: vec![]
+                            };
+                            stream.write(&event::serialize(event)).unwrap();
+
+                            self.nodes.insert(new_fd, stream);
+                            nodes_ips.insert(addr.ip(), fd);
+
+                            let bytes = handshake_event.data.get(0).unwrap();
+                            let node_id = utils::u128_from_ne_bytes(bytes).unwrap();
+
+                            self.nodes_ids.insert(node_id, new_fd);
                         } else {
                             return Ok(());
                         }
@@ -436,12 +458,26 @@ impl Server {
                 nodes_ips.remove(&addr.ip());
             }
 
+            let nodes_ids_clone = self.nodes_ids.clone();
+
+            let mut id_to_del = None;
+            for (node_id, node_fd) in nodes_ids_clone.iter() {
+                if fd == *node_fd {
+                    id_to_del = Some(node_id);
+                    break;
+                }
+            }
+
+            if let Some(id) = id_to_del {
+                self.nodes_ids.remove(&id);
+            }
+
             // Notify `node` about old connection
             self.main_event_channel_tx.send(proto_msg::Event {
                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: Some(proto_msg::event::Dest::Node as i32),
-                kind: proto_msg::event::Kind::UpdateNodeCount as i32,
-                data: vec![self.nodes.len().to_ne_bytes().to_vec()],
+                kind: proto_msg::event::Kind::NodeDisconnected as i32,
+                data: vec![id_to_del.unwrap().to_ne_bytes().to_vec()],
                 meta: vec![]
             }).unwrap();
 
@@ -458,7 +494,7 @@ impl Server {
         Ok(())
     }
 
-    fn handle_new_stream(&mut self) -> Result<(), ServerError> {
+    fn handle_new_stream(&mut self, event: proto_msg::Event) -> Result<(), ServerError> {
         log::debug!("Handling `new_stream`");
 
         // Connecting new node
@@ -474,12 +510,17 @@ impl Server {
             nodes_ips.insert(addr.ip(), fd);
         }
 
+        let bytes = event.data.get(0).unwrap();
+        let node_id = utils::u128_from_ne_bytes(bytes).unwrap();
+
+        self.nodes_ids.insert(node_id, fd);
+
         // Notify `node` about new connection
         self.main_event_channel_tx.send(proto_msg::Event {
             dir: Some(proto_msg::event::Dir::Incoming as i32),
             dest: Some(proto_msg::event::Dest::Node as i32),
-            kind: proto_msg::event::Kind::UpdateNodeCount as i32,
-            data: vec![self.nodes.len().to_ne_bytes().to_vec()],
+            kind: proto_msg::event::Kind::NodeConnected as i32,
+            data: event.data,
             meta: vec![]
         }).unwrap();
 
@@ -500,8 +541,18 @@ impl Server {
 
         let actual_event = event.data.get(0).unwrap();
 
-        for (_fd, mut stream) in self.nodes.iter() {
-            stream.write(actual_event).unwrap();
+        let bytes = event.data.get(1).unwrap();
+        let nodes_count = utils::i32_from_ne_bytes(bytes).unwrap();
+
+        for i in 0..nodes_count {
+            let index = 2 + i;
+            let bytes = event.data.get(index as usize).unwrap();
+            let node_id = utils::u128_from_ne_bytes(bytes).unwrap();
+
+            if let Some(fd) = self.nodes_ids.get(&node_id) {
+                let mut stream = self.nodes.get(&fd).unwrap();
+                stream.write(actual_event).unwrap();
+            }
         }
 
         Ok(())
@@ -540,19 +591,20 @@ impl Server {
 
         let meta = (&event.meta[1..]).to_vec();
 
-        // TODO: Add check for client being already disconnected
-        let mut client_stream = self.clients.get(&client_fd).unwrap();
+        if self.clients.contains_key(&client_fd) {
+            let mut client_stream = self.clients.get(&client_fd).unwrap();
 
-        // Removing meta information
-        let event = proto_msg::Event {
-            dir: event.dir,
-            dest: event.dest,
-            kind: event.kind,
-            data: event.data,
-            meta
-        };
+            // Removing meta information
+            let event = proto_msg::Event {
+                dir: event.dir,
+                dest: event.dest,
+                kind: event.kind,
+                data: event.data,
+                meta
+            };
 
-        client_stream.write(&event::serialize(event)).unwrap();
+            client_stream.write(&event::serialize(event)).unwrap();
+        }
 
         Ok(())
     }
@@ -618,7 +670,8 @@ impl Server {
 
     fn t_scanner(server_event_tx: mpsc::Sender<proto_msg::Event>,
 				 server_stream_tx: mpsc::Sender<TcpStream>,
-                 known_nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>) {
+                 known_nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>,
+                 node_id: u128) {
         log::debug!("Scanner thread started");
 
         loop {
@@ -653,10 +706,16 @@ impl Server {
                                 dir: None,
                                 dest: None,
                                 kind: proto_msg::event::Kind::MarkMeNode as i32,
-                                data: vec![],
+                                data: vec![node_id.to_ne_bytes().to_vec()],
                                 meta: vec![]
                             };
                             stream.write(&event::serialize(event)).unwrap();
+
+                            let messages = utils::read_full_stream(&mut stream).unwrap();
+                            let events = event::deserialize(&messages).unwrap();
+                            let event = events.get(0).unwrap();
+                            let bytes = event.data.get(0).unwrap();
+                            let node_id = utils::u128_from_ne_bytes(bytes).unwrap();
 
                             // Send stream of client that responded
                             server_stream_tx.send(stream).unwrap();
@@ -665,7 +724,7 @@ impl Server {
                                 dir: Some(proto_msg::event::Dir::Incoming as i32),
                                 dest: None,
                                 kind: proto_msg::event::Kind::NewStream as i32,
-                                data: vec![],
+                                data: vec![node_id.to_ne_bytes().to_vec()],
                                 meta: vec![]
                             }).unwrap();
                         },

@@ -14,8 +14,8 @@ def bytes_to_str(bytes_vec):
 
 class BasicPlugin(spacy_plugin.SpacyPlugin):
     GET_FROM_SHARED_MEMORY = 9
-    TRANSACTION_SUCCEEDED = 14
-    TRANSACTION_FAILED = 15
+    TRANSACTION_SUCCEEDED = 15
+    TRANSACTION_FAILED = 16
     SAVE_DATA = 100
     GET_DATA = 101
 

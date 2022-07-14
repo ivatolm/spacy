@@ -42,4 +42,8 @@ impl FSM {
     pub fn pop_front_event(&mut self) -> Option<proto_msg::Event> {
         self.queue.pop_front()
     }
+
+    pub fn is_queue_empty(&mut self) -> bool {
+        self.queue.is_empty()
+    }
 }

@@ -22,7 +22,7 @@ fn main() {
     let node_event_channel_tx = node.start();
 
     let main_event_channel_tx_clone = main_event_channel_tx.clone();
-    let server = Server::new(main_event_channel_tx_clone);
+    let server = Server::new(main_event_channel_tx_clone, node.get_node_id());
     let (server_event_channel_tx, _server_handle) = server.start();
 
     let main_event_channel_tx_clone = main_event_channel_tx.clone();
