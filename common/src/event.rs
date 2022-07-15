@@ -8,14 +8,19 @@ pub fn serialize(event: proto_msg::Event) -> Vec<u8> {
     event.encode_length_delimited_to_vec()
 }
 
-pub fn deserialize(mut buf: &[u8]) -> Result<Vec<proto_msg::Event>, prost::DecodeError> {
+pub fn deserialize(mut buf: &[u8]) -> (Vec<proto_msg::Event>, &[u8]) {
 	let mut events = vec![];
 
 	// In system without acknowledgment events may pile up,
 	// so we trying to take as much as we can
 
 	loop {
-		let event = proto_msg::Event::decode_length_delimited(buf)?;
+		let event = match proto_msg::Event::decode_length_delimited(buf) {
+			Ok(event) => event,
+			Err(_) => {
+				return (events, buf);
+			}
+		};
 		events.push(event.clone());
 
 		let serialized_event = serialize(event);
@@ -27,8 +32,5 @@ pub fn deserialize(mut buf: &[u8]) -> Result<Vec<proto_msg::Event>, prost::Decod
 		}
 	}
 
-	// Reversing events orders them in the original(sent) order
-	events.reverse();
-
-	Ok(events)
+	(events, buf)
 }

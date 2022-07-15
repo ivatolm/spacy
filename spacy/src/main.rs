@@ -66,7 +66,7 @@ fn main() {
         node.step().unwrap();
         plugin_man.step().unwrap();
 
-        thread::sleep(time::Duration::from_secs(1));
+        thread::sleep(time::Duration::from_millis(1));
     }
 
     // match server_handle.join() {

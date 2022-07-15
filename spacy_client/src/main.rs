@@ -17,8 +17,11 @@ fn get_from_user(greeter: &str) -> String {
 }
 
 fn main() {
+    let ips = utils::get_ipv4_ips();
+    let first_ip = ips.get(0).unwrap();
+
     println!("Connecting to the node...");
-    let mut stream = TcpStream::connect(("192.168.2.103", 32000)).unwrap();
+    let mut stream = TcpStream::connect((first_ip.to_owned(), 32000)).unwrap();
     let event = proto_msg::Event {
         dir: None,
         dest: None,
@@ -51,6 +54,30 @@ fn main() {
                     dest: None,
                     kind: proto_msg::event::Kind::NewPlugin as i32,
                     data: vec![content.as_bytes().to_vec(), name.as_bytes().to_vec()],
+                    meta: vec![]
+                };
+
+                event
+            },
+            "remove_plugin" => {
+                let name = get_from_user("Name: ");
+
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: proto_msg::event::Kind::RemovePlugin as i32,
+                    data: vec![name.as_bytes().to_vec()],
+                    meta: vec![]
+                };
+
+                event
+            },
+            "list" => {
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: proto_msg::event::Kind::GetPluginList as i32,
+                    data: vec![],
                     meta: vec![]
                 };
 
@@ -99,15 +126,13 @@ fn main() {
         stream.write(&event::serialize(event)).unwrap();
         println!("Done! Waiting for response...");
 
-        let msg = utils::read_full_stream(&mut stream).unwrap();
-        if msg.len() != 0 {
-            let events = event::deserialize(&msg).unwrap();
+        let events = utils::read_events(&mut stream).unwrap();
+        if events.len() != 0 {
             for event in events {
                 println!("Kind: {}", event.kind);
-                println!("Data: {:?}", event.data);
-                if event.data.len() > 0 {
-                    let first_arg = event.data.get(0).unwrap();
-                    println!("Data: {:?}", String::from_utf8_lossy(first_arg));
+                println!("Data: ");
+                for item in event.data.iter() {
+                    println!("{:?}", String::from_utf8_lossy(item));
                 }
             }
 

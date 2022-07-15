@@ -111,7 +111,7 @@ impl Node {
     }
 
     fn wait_event(&mut self) -> Result<(), NodeError> {
-        log::debug!("State `wait_event`");
+        // log::debug!("State `wait_event`");
 
         let event = match self.event_channel_rx.try_recv() {
             Ok(event) => event,
@@ -333,6 +333,8 @@ impl Node {
                     let transaction_event = self.transaction_queue.pop().unwrap();
                     let meta = transaction_event.meta;
 
+                    self.is_transaction_master = false;
+
                     let event = proto_msg::Event {
                         dir: Some(proto_msg::event::Dir::Incoming as i32),
                         dest: Some(proto_msg::event::Dest::PluginMan as i32),
@@ -535,6 +537,20 @@ impl Node {
 
     fn handle_request_update_shared_memory_outcoming(&mut self, event: proto_msg::Event) -> Result<(), NodeError> {
         log::debug!("Handling `request update_shared_memory`");
+
+        if self.is_transaction {
+            let event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: Some(proto_msg::event::Dest::PluginMan as i32),
+                kind: proto_msg::event::Kind::TransactionFailed as i32,
+                data: vec![],
+                meta: event.meta
+            };
+
+            self.main_event_channel_tx.send(event).unwrap();
+
+            return Ok(());
+        }
 
         let version = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_nanos();
         let key = utils::i32_from_ne_bytes(event.data.get(0).unwrap()).unwrap();

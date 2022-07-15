@@ -16,6 +16,42 @@ use pyo3::{
     prelude::*
 };
 
+
+#[pyclass]
+#[derive(Clone)]
+struct SpacyKinds {
+    pub kind_transaction_succeeded: i32,
+    pub kind_transaction_failed: i32,
+    pub kind_get_from_shared_memory: i32
+}
+
+#[pymethods]
+impl SpacyKinds {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            kind_transaction_succeeded: proto_msg::event::Kind::TransactionSucceeded as i32,
+            kind_transaction_failed: proto_msg::event::Kind::TransactionFailed as i32,
+            kind_get_from_shared_memory: proto_msg::event::Kind::GetFromSharedMemory as i32
+        }
+    }
+
+    #[getter]
+    fn kind_transaction_succeeded(&mut self) -> i32 {
+        self.kind_transaction_succeeded
+    }
+
+    #[getter]
+    fn kind_transaction_failed(&mut self) -> i32 {
+        self.kind_transaction_failed
+    }
+
+    #[getter]
+    fn kind_get_from_shared_memory(&mut self) -> i32 {
+        self.kind_get_from_shared_memory
+    }
+}
+
 #[pyclass]
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -102,18 +138,17 @@ impl SpacyPlugin {
         let fd = self.stream.as_raw_fd();
         readfds.insert(fd);
 
-        let mut timeout = TimeVal::milliseconds(10);
+        let mut timeout = TimeVal::milliseconds(1);
         let result = select(None, &mut readfds, None, None, &mut timeout);
         if result.is_err() || !readfds.contains(fd) {
             return;
         }
 
         // Reading message until read
-        let message = utils::read_full_stream(&mut self.stream).unwrap();
+        let events = utils::read_events(&mut self.stream).unwrap();
 
         // If message length is zero, then plugin manager disconnected
-        if message.len() != 0 {
-            let events = event::deserialize(&message).unwrap();
+        if events.len() != 0 {
             for event in events {
                 self.fsm.push_event(event);
             }
@@ -214,5 +249,6 @@ impl SpacyPlugin {
 #[pymodule]
 fn spacy_plugin(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<SpacyPlugin>()?;
+    m.add_class::<SpacyKinds>()?;
     Ok(())
 }

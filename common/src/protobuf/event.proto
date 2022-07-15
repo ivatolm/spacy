@@ -23,18 +23,20 @@ message Event {
         NEW_FD = 4;
         OLD_FD = 5;
         NEW_PLUGIN = 6;
-        NEW_PLUGIN_EVENT = 7;
-        UPDATE_SHARED_MEMORY = 8;
-        GET_FROM_SHARED_MEMORY = 9;
-        BROADCAST_EVENT = 10;
-        RESPOND_CLIENT = 11;
-        REQUEST_TRANSACTION = 12;
-        APPROVE_TRANSACTION = 13;
-        COMMIT_TRANSACTION = 14;
-        TRANSACTION_SUCCEEDED = 15;
-        TRANSACTION_FAILED = 16;
-        NODE_CONNECTED = 17;
-        NODE_DISCONNECTED = 18;
+        REMOVE_PLUGIN = 7;
+        GET_PLUGIN_LIST = 8;
+        NEW_PLUGIN_EVENT = 9;
+        UPDATE_SHARED_MEMORY = 10;
+        GET_FROM_SHARED_MEMORY = 11;
+        BROADCAST_EVENT = 12;
+        RESPOND_CLIENT = 13;
+        REQUEST_TRANSACTION = 14;
+        APPROVE_TRANSACTION = 15;
+        COMMIT_TRANSACTION = 16;
+        TRANSACTION_SUCCEEDED = 17;
+        TRANSACTION_FAILED = 18;
+        NODE_CONNECTED = 19;
+        NODE_DISCONNECTED = 20;
     }
 
     optional Dir dir = 1;

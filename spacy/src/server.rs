@@ -4,7 +4,7 @@ use std::{
     os::unix::prelude::AsRawFd,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time, io::{Write, Read}
+    time, io::Write
 };
 use nix::sys::{
     select::{select, FdSet},
@@ -26,8 +26,7 @@ pub struct Server {
     nodes: HashMap<i32, TcpStream>,
     nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>,
     nodes_ids: HashMap<u128, i32>,
-    listener_event_channel_tx: mpsc::Sender<proto_msg::Event>,
-    listener_handle: thread::JoinHandle<()>,
+    readfds: Vec<i32>,
     scanner_handle: thread::JoinHandle<()>,
 
     node_id: u128,
@@ -42,30 +41,23 @@ pub enum ServerError {
 impl Server {
     // 0 - initialization
     // 1 - waiting for events
-    // 2 - handling incoming event
-    // 3 - handling outcoming event
-    // 4 - stop
+    // 2 - handling event
+    // 3 - handling incoming event
+    // 4 - handling outcoming event
+    // 5 - stop
 
     pub fn new(main_event_channel_tx: mpsc::Sender<proto_msg::Event>, node_id: u128) -> Self {
         let fsm = FSM::new(0, HashMap::from([
-            (0, vec![1, 4]),
-            (1, vec![2, 3, 4]),
-            (2, vec![1, 4]),
-            (3, vec![1, 4]),
-            (4, vec![])
+            (0, vec![1, 5]),
+            (1, vec![2, 5]),
+            (2, vec![1, 3, 4, 5]),
+            (3, vec![2, 5]),
+            (4, vec![2, 5]),
+            (5, vec![])
         ]));
 
         // Creating main event communication channel
         let (event_channel_tx, event_channel_rx) = mpsc::channel();
-
-        // Creating communication channel with `listener`
-        let (listener_event_channel_tx, listener_event_channel_rx) = mpsc::channel();
-        let server_event_channel_tx = event_channel_tx.clone();
-
-        // Spawning `listener`
-        let listener_handle = thread::spawn(move || {
-            Self::t_listener(listener_event_channel_rx, server_event_channel_tx);
-        });
 
 		// Creating communication channel with `scanner`
 		let (scanner_stream_channel_tx, stream_channel_rx) = mpsc::channel();
@@ -91,8 +83,7 @@ impl Server {
             nodes: HashMap::new(),
             nodes_ips,
             nodes_ids: HashMap::new(),
-            listener_event_channel_tx,
-            listener_handle,
+            readfds: vec![],
 			scanner_handle,
 
             node_id,
@@ -110,9 +101,10 @@ impl Server {
             match self.fsm.state {
                 0 => self.init()?,
                 1 => self.wait_event()?,
-                2 => self.handle_incoming_event()?,
-                3 => self.handle_outcoming_event()?,
-                4 => {
+                2 => self.handle_event()?,
+                3 => self.handle_incoming_event()?,
+                4 => self.handle_outcoming_event()?,
+                5 => {
                     self.stop()?;
                     return Ok(())
                 },
@@ -141,13 +133,13 @@ impl Server {
 
                     // Notifing `listener` thread about new server
                     let event = proto_msg::Event {
-                        dir: None,
+                        dir: Some(proto_msg::event::Dir::Incoming as i32),
                         dest: None,
                         kind: proto_msg::event::Kind::NewFd as i32,
                         data: vec![fd.to_ne_bytes().to_vec()],
                         meta: vec![]
                     };
-                    self.listener_event_channel_tx.send(event).unwrap();
+                    self.event_channel_tx.send(event).unwrap();
                 },
                 Err(error) => {
                     log::warn!("Couldn't start a listener {}: {}", ip, error);
@@ -160,32 +152,92 @@ impl Server {
     }
 
     fn wait_event(&mut self) -> Result<(), ServerError> {
-        log::debug!("State `wait_event`");
+        // log::debug!("State `wait_event`");
 
         // Waiting for new events
-        let event = match self.event_channel_rx.recv() {
-            Ok(event) => event,
-            Err(error) => {
-                log::error!("Error occured while received event: {}", error);
-                panic!();
-            }
+        match self.event_channel_rx.try_recv() {
+            Ok(event) => {
+                if event.kind == proto_msg::event::Kind::NewFd as i32 {
+                    let bytes = event.data.get(0).unwrap();
+                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
+                    self.readfds.push(fd);
+                }
+
+                else if event.kind == proto_msg::event::Kind::OldFd as i32 {
+                    let bytes = event.data.get(0).unwrap();
+                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
+
+                    let mut fd_index = 0;
+                    for i in 0..self.readfds.len() {
+                        if *self.readfds.get(i).unwrap() == fd {
+                            fd_index = i;
+                            break;
+                        }
+                    }
+                    self.readfds.remove(fd_index);
+                }
+
+                else{
+                    self.fsm.push_event(event);
+                }
+            },
+            Err(_) => {}
         };
 
+        let mut readfds = FdSet::new();
+        for fd in self.readfds.iter() {
+            readfds.insert(*fd);
+        }
+
+        // Wait for acitivy on specified fds
+        let mut timeout = TimeVal::milliseconds(1);
+        let result = select(None, &mut readfds, None, None, &mut timeout);
+        if result.is_err() {
+            log::warn!("`select` exited with error: {:?}", result.err());
+        }
+
+        // Send events to the handler
+        for fd in readfds.fds(None) {
+            let event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: None,
+                kind: proto_msg::event::Kind::NewStreamEvent as i32,
+                data: vec![fd.to_ne_bytes().to_vec()],
+                meta: vec![]
+            };
+
+            self.fsm.push_event(event);
+        }
+
+        self.fsm.transition(2)?;
+        Ok(())
+    }
+
+    fn handle_event(&mut self) -> Result<(), ServerError> {
+        // log::debug!("State `handle_event`");
+
+        let event = match self.fsm.pop_front_event() {
+            Some(event) => event,
+            None => {
+                self.fsm.transition(1)?;
+                return Ok(());
+            }
+        };
         let event_direction = event.dir;
-        self.fsm.push_event(event);
+        self.fsm.push_front_event(event);
 
         // Handling event based on it's direction
         if let Some(dir) = event_direction {
             if dir == proto_msg::event::Dir::Incoming as i32 {
                 log::debug!("Received `incoming` event");
 
-                self.fsm.transition(2)?;
+                self.fsm.transition(3)?;
             }
 
             else if dir == proto_msg::event::Dir::Outcoming as i32 {
                 log::debug!("Received `outcoming` event");
 
-                self.fsm.transition(3)?;
+                self.fsm.transition(4)?;
             }
 
             else {
@@ -236,7 +288,7 @@ impl Server {
             log::warn!("Received event with unknown kind: {}", event.kind);
         }
 
-        self.fsm.transition(1)?;
+        self.fsm.transition(2)?;
         Ok(())
     }
 
@@ -264,17 +316,12 @@ impl Server {
             log::warn!("Received event with unknown kind: {}", event.kind);
         }
 
-        self.fsm.transition(1)?;
+        self.fsm.transition(2)?;
         Ok(())
     }
 
     fn stop(self) -> Result<(), ServerError> {
         log::debug!("State `stop`");
-
-        match self.listener_handle.join() {
-            Ok(_) => Ok(()),
-            Err(_) => Err(ServerError::InternalError)
-        }?;
 
         match self.scanner_handle.join() {
             Ok(_) => Ok(()),
@@ -295,8 +342,7 @@ impl Server {
                 let new_fd = stream.as_raw_fd();
 
                 // Handshake
-                let message = utils::read_full_stream(&mut stream).unwrap();
-                let events = event::deserialize(&message).unwrap();
+                let events = utils::read_events(&mut stream).unwrap();
                 // Assuming we will get only one event
                 let handshake_event = events.get(0).unwrap();
 
@@ -352,8 +398,8 @@ impl Server {
 
                 if handshake_ok {
                     // Notify `listener` thread about new fd
-                    self.listener_event_channel_tx.send(proto_msg::Event {
-                        dir: None,
+                    self.event_channel_tx.send(proto_msg::Event {
+                        dir: Some(proto_msg::event::Dir::Incoming as i32),
                         dest: None,
                         kind: proto_msg::event::Kind::NewFd as i32,
                         data: vec![new_fd.to_ne_bytes().to_vec()],
@@ -377,12 +423,10 @@ impl Server {
         let stream = self.clients.get_mut(&fd).unwrap();
 
         // Getting sent events
-        let message = utils::read_full_stream(stream).unwrap();
-        if message.len() != 0 {
-            log::info!("Received new {}-bytes message from the client", message.len());
+        let events = utils::read_events(stream).unwrap();
+        if events.len() != 0 {
+            log::debug!("Received new {}-event message from the client", events.len());
 
-            // Parsing events and sending them to main
-            let events = event::deserialize(&message).unwrap();
             for event in events {
                 let event = proto_msg::Event {
                     dir: Some(proto_msg::event::Dir::Incoming as i32),
@@ -404,8 +448,8 @@ impl Server {
             self.clients.remove(&fd);
 
             // Notify `listener` thread about old fd
-            self.listener_event_channel_tx.send(proto_msg::Event {
-                dir: None,
+            self.event_channel_tx.send(proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: None,
                 kind: proto_msg::event::Kind::OldFd as i32,
                 data: vec![fd.to_ne_bytes().to_vec()],
@@ -422,12 +466,10 @@ impl Server {
         let stream = self.nodes.get_mut(&fd).unwrap();
 
         // Getting sent events
-        let message = utils::read_full_stream(stream).unwrap();
-        if message.len() != 0 {
-            log::info!("Received new {}-bytes message from the node", message.len());
+        let events = utils::read_events(stream).unwrap();
+        if events.len() != 0 {
+            log::debug!("Received new {}-event message from the node", events.len());
 
-            // Parsing events and sending them to main
-            let events = event::deserialize(&message).unwrap();
             for event in events {
                 // Adding fd to event's meta information
                 let mut meta = event.meta;
@@ -482,8 +524,8 @@ impl Server {
             }).unwrap();
 
             // Notify `listener` thread about old client
-            self.listener_event_channel_tx.send(proto_msg::Event {
-                dir: None,
+            self.event_channel_tx.send(proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
                 dest: None,
                 kind: proto_msg::event::Kind::OldFd as i32,
                 data: vec![fd.to_ne_bytes().to_vec()],
@@ -525,8 +567,8 @@ impl Server {
         }).unwrap();
 
         // Notify `listener` thread about new client
-        self.listener_event_channel_tx.send(proto_msg::Event {
-            dir: None,
+        self.event_channel_tx.send(proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Incoming as i32),
             dest: None,
             kind: proto_msg::event::Kind::NewFd as i32,
             data: vec![fd.to_ne_bytes().to_vec()],
@@ -537,8 +579,6 @@ impl Server {
     }
 
     fn handle_broadcast_event(&mut self, event: proto_msg::Event) -> Result<(), ServerError> {
-        log::debug!("Handling `broadcast_event`");
-
         let actual_event = event.data.get(0).unwrap();
 
         let bytes = event.data.get(1).unwrap();
@@ -609,65 +649,6 @@ impl Server {
         Ok(())
     }
 
-    fn t_listener(listener_rx: mpsc::Receiver<proto_msg::Event>,
-                  server_tx: mpsc::Sender<proto_msg::Event>) {
-        log::debug!("Listener thread started");
-
-        let mut readfds_vec = vec![];
-
-        loop {
-            // Handling events from other thread
-            loop {
-                let timeout = time::Duration::from_millis(100);
-                if let Ok(event) = listener_rx.recv_timeout(timeout) {
-                    let bytes = event.data.get(0).unwrap();
-                    let fd = utils::i32_from_ne_bytes(bytes).unwrap();
-
-                    if event.kind == proto_msg::event::Kind::NewFd as i32 {
-                        readfds_vec.push(fd);
-                    }
-
-                    else if event.kind == proto_msg::event::Kind::OldFd as i32 {
-                        let mut fd_index = 0;
-                        for i in 0..readfds_vec.len() {
-                            if *readfds_vec.get(i).unwrap() == fd {
-                                fd_index = i;
-                                break;
-                            }
-                        }
-                        readfds_vec.remove(fd_index);
-                    }
-                } else { break }
-            }
-
-            // Update set of fds to be read
-            let mut readfds = FdSet::new();
-            for fd in readfds_vec.iter() {
-                readfds.insert(*fd);
-            }
-
-            // Wait for acitivy on specified fds
-            let mut timeout = TimeVal::milliseconds(100);
-            let result = select(None, &mut readfds, None, None, &mut timeout);
-            if result.is_err() {
-                log::warn!("`select` exited with error: {:?}", result.err());
-            }
-
-            // Send events to the handler
-            for fd in readfds.fds(None) {
-                let event = proto_msg::Event {
-                    dir: Some(proto_msg::event::Dir::Incoming as i32),
-                    dest: None,
-                    kind: proto_msg::event::Kind::NewStreamEvent as i32,
-                    data: vec![fd.to_ne_bytes().to_vec()],
-                    meta: vec![]
-                };
-
-                server_tx.send(event).unwrap();
-            }
-        }
-    }
-
     fn t_scanner(server_event_tx: mpsc::Sender<proto_msg::Event>,
 				 server_stream_tx: mpsc::Sender<TcpStream>,
                  known_nodes_ips: Arc<Mutex<HashMap<IpAddr, i32>>>,
@@ -711,8 +692,7 @@ impl Server {
                             };
                             stream.write(&event::serialize(event)).unwrap();
 
-                            let messages = utils::read_full_stream(&mut stream).unwrap();
-                            let events = event::deserialize(&messages).unwrap();
+                            let events = utils::read_events(&mut stream).unwrap();
                             let event = events.get(0).unwrap();
                             let bytes = event.data.get(0).unwrap();
                             let node_id = utils::u128_from_ne_bytes(bytes).unwrap();

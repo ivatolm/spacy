@@ -13,14 +13,12 @@ def bytes_to_str(bytes_vec):
     return string
 
 class BasicPlugin(spacy_plugin.SpacyPlugin):
-    GET_FROM_SHARED_MEMORY = 9
-    TRANSACTION_SUCCEEDED = 15
-    TRANSACTION_FAILED = 16
     SAVE_DATA = 100
     GET_DATA = 101
 
     def __init__(self):
         super().__init__()
+        self.kinds = spacy_plugin.SpacyKinds()
         self.queue = []
 
     def update(self):
@@ -28,25 +26,20 @@ class BasicPlugin(spacy_plugin.SpacyPlugin):
             event = self.get_event()
             if not event: return
 
-            if event.kind == self.TRANSACTION_SUCCEEDED:
+            if event.kind == self.kinds.kind_transaction_succeeded:
                 response = self.queue.pop(0)
-
                 self.respond_client([bytes("Your data was saved", encoding="utf-8")], response[1])
 
-            elif event.kind == self.TRANSACTION_FAILED:
+            elif event.kind == self.kinds.kind_transaction_failed:
                 response = self.queue.pop(0)
-
                 self.respond_client([bytes("Failed to process request", encoding="utf-8")], response[1])
 
-
-            elif event.kind == self.GET_FROM_SHARED_MEMORY:
+            elif event.kind == self.kinds.kind_get_from_shared_memory:
                 data = event.data[0]
-
                 response = self.queue.pop(0)
-
                 message = response[0].format(bytes_to_str(data))
-                print(response, message)
                 self.respond_client([bytes(message, encoding="utf-8")], response[1])
+
 
             elif event.kind == self.SAVE_DATA:
                 if len(event.data) != 2:
@@ -80,4 +73,4 @@ plugin = BasicPlugin()
 while True:
     plugin.step()
     plugin.execute()
-    time.sleep(1)
+    time.sleep(0.001)

@@ -23,6 +23,7 @@ pub struct PluginMan {
     plugins: HashMap<u32, i32>,
     plugins_names: HashMap<Vec<u8>, u32>,
     plugins_streams: HashMap<i32, TcpStream>,
+    plugins_processes: HashMap<u32, std::process::Child>,
 
     main_event_channel_tx: mpsc::Sender<proto_msg::Event>
 }
@@ -64,6 +65,7 @@ impl PluginMan {
             plugins: HashMap::new(),
             plugins_names: HashMap::new(),
             plugins_streams: HashMap::new(),
+            plugins_processes: HashMap::new(),
 
             main_event_channel_tx
         }
@@ -98,7 +100,7 @@ impl PluginMan {
     }
 
     fn wait_event(&mut self) -> Result<(), PluginManError> {
-        log::debug!("State `wait_event`");
+        // log::debug!("State `wait_event`");
 
         // Checking if there anything to read
         match self.event_channel_rx.try_recv() {
@@ -113,23 +115,22 @@ impl PluginMan {
             readfds.insert(*fd);
         }
 
-        let mut timeout = TimeVal::milliseconds(10);
+        let mut timeout = TimeVal::milliseconds(1);
         let result = select(None, &mut readfds, None, None, &mut timeout);
         if result.is_err() {
             return Ok(());
         }
 
         for fd in readfds.fds(None) {
-            let mut stream = self.plugins_streams.get_mut(&fd).unwrap();
+            let stream = self.plugins_streams.get_mut(&fd).unwrap();
 
             // Reading message until read
-            let message = utils::read_full_stream(&mut stream).unwrap();
+            let events = utils::read_events(stream).unwrap();
 
             // If plugin manager disconnected
-            if message.len() == 0 {
+            if events.len() == 0 {
                 stream.shutdown(Shutdown::Both).unwrap();
             } else {
-                let events = event::deserialize(&message).unwrap();
                 for event in events {
                     // Adding plugin's id to event's meta information
                     let mut event_meta = event.meta;
@@ -143,7 +144,7 @@ impl PluginMan {
                         meta: event_meta
                     };
 
-                    self.fsm.push_front_event(event_with_meta);
+                    self.fsm.push_event(event_with_meta);
                 }
             }
         }
@@ -153,7 +154,7 @@ impl PluginMan {
     }
 
     fn handle_event(&mut self) -> Result<(), PluginManError> {
-        log::debug!("State `handle_event`");
+        // log::debug!("State `handle_event`");
 
         let event = match self.fsm.pop_front_event() {
             Some(event) => event,
@@ -194,6 +195,14 @@ impl PluginMan {
 
         if event.kind == proto_msg::event::Kind::NewPlugin as i32 {
             self.handle_new_plugin(event)?;
+        }
+
+        else if event.kind == proto_msg::event::Kind::RemovePlugin as i32 {
+            self.handle_remove_plugin(event)?;
+        }
+
+        else if event.kind == proto_msg::event::Kind::GetPluginList as i32 {
+            self.handle_get_plugin_list(event)?;
         }
 
         else if event.kind == proto_msg::event::Kind::NewPluginEvent as i32 {
@@ -264,37 +273,44 @@ impl PluginMan {
         let plugin_source = String::from_utf8_lossy(&first_arg).to_string();
         let plugin_name = second_arg.to_vec();
 
-        // Spawning new thread with the plugin
-        let exec_status = Command::new("python3")
-            .arg("-c")
-            .arg(plugin_source)
-            .spawn();
+        if self.plugins_names.contains_key(&plugin_name) {
+            status = -3;
 
-        // Check if child is started successfully
-        match exec_status {
-            Ok(mut child) => {
-                // Accept plugin's connection
-                // TODO: somehow make this call non-blocking (timeout)
-                match self.listener.accept() {
-                    Ok((stream, _addr)) => {
-                        // Add plugin to local structs
-                        let child_id = child.id();
-                        self.plugins.insert(child_id, stream.as_raw_fd());
-                        self.plugins_names.insert(plugin_name, child_id);
-                        self.plugins_streams.insert(stream.as_raw_fd(), stream);
+            log::info!("Plugin startup rejected. Name is already in use");
+        } else {
+            // Spawning new thread with the plugin
+            let exec_status = Command::new("python3")
+                .arg("-c")
+                .arg(plugin_source)
+                .spawn();
 
-                        log::info!("New plugin started");
-                    },
-                    Err(err) => {
-                        log::warn!("Error occured while accepting plugin's connection: {}", err);
-                        child.kill().unwrap();
-                        status = -2;
-                    }
-                };
-            },
-            Err(err) => {
-                log::warn!("Error occured while starting a plugin: {}", err);
-                status = -1;
+            // Check if child is started successfully
+            match exec_status {
+                Ok(mut child) => {
+                    // Accept plugin's connection
+                    // TODO: somehow make this call non-blocking (timeout)
+                    match self.listener.accept() {
+                        Ok((stream, _addr)) => {
+                            // Add plugin to local structs
+                            log::info!("New plugin started");
+                            log::debug!("Fd: {}", stream.as_raw_fd());
+                            let child_id = child.id();
+                            self.plugins.insert(child_id, stream.as_raw_fd());
+                            self.plugins_names.insert(plugin_name, child_id);
+                            self.plugins_streams.insert(stream.as_raw_fd(), stream);
+                            self.plugins_processes.insert(child_id, child);
+                        },
+                        Err(err) => {
+                            log::warn!("Error occured while accepting plugin's connection: {}", err);
+                            child.kill().unwrap();
+                            status = -2;
+                        }
+                    };
+                },
+                Err(err) => {
+                    log::warn!("Error occured while starting a plugin: {}", err);
+                    status = -1;
+                }
             }
         }
 
@@ -312,6 +328,69 @@ impl PluginMan {
         Ok(())
     }
 
+    fn handle_remove_plugin(&mut self, event: proto_msg::Event) -> Result<(), PluginManError> {
+        log::debug!("Handling `remove_plugin`");
+
+        // Remove status variable
+        let mut status: i32 = 0;
+
+        let first_arg = event.data.get(0).unwrap();
+        let plugin_name = first_arg.to_vec();
+
+        if !self.plugins_names.contains_key(&plugin_name) {
+            log::info!("Plugin removal rejected. Plugin with this name doesn't exist");
+
+            status = -1;
+        } else {
+            let id = self.plugins_names.remove(&plugin_name).unwrap();
+            let fd = self.plugins.remove(&id).unwrap();
+            let stream = self.plugins_streams.remove(&fd).unwrap();
+            stream.shutdown(Shutdown::Both).unwrap();
+            let mut child = self.plugins_processes.remove(&id).unwrap();
+            match child.kill() {
+                Ok(_) => {},
+                Err(_) => {}
+            };
+
+            log::info!("Plugin removed");
+        }
+
+        // TODO: Notify client about status
+        let response_event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Outcoming as i32),
+            dest: Some(proto_msg::event::Dest::Server as i32),
+            kind: proto_msg::event::Kind::RespondClient as i32,
+            data: vec![status.to_ne_bytes().to_vec()],
+            meta: event.meta
+        };
+
+        self.main_event_channel_tx.send(response_event).unwrap();
+
+        Ok(())
+    }
+
+    fn handle_get_plugin_list(&mut self, event: proto_msg::Event) -> Result<(), PluginManError> {
+        log::debug!("Handling `get_plugin_list`");
+
+        let mut data = vec![];
+        for name in self.plugins_names.keys() {
+            data.push(name.clone());
+        }
+
+        // TODO: Notify client about status
+        let response_event = proto_msg::Event {
+            dir: Some(proto_msg::event::Dir::Outcoming as i32),
+            dest: Some(proto_msg::event::Dest::Server as i32),
+            kind: proto_msg::event::Kind::RespondClient as i32,
+            data,
+            meta: event.meta
+        };
+
+        self.main_event_channel_tx.send(response_event).unwrap();
+
+        Ok(())
+    }
+
     fn handle_new_plugin_event(&mut self, event: proto_msg::Event) -> Result<(), PluginManError> {
         log::debug!("Handling `new_plugin_event`");
 
@@ -320,26 +399,43 @@ impl PluginMan {
 
         // Parsing event data
         let plugin_name = first_arg.to_vec();
-        let events_to_plugin = event::deserialize(second_arg).unwrap();
+        let (events_to_plugin, _rem) = event::deserialize(second_arg);
 
-        // Getting plugin's stream from the name
-        let child_id = self.plugins_names.get(&plugin_name).unwrap();
-        let fd = self.plugins.get(&child_id).unwrap();
-        let mut stream = self.plugins_streams.get(&fd).unwrap();
+        if !self.plugins_names.contains_key(&plugin_name) {
+            let status: i32 = -1;
 
-        // Sending an event to plugin
-        let meta = event.meta;
-        for event in events_to_plugin {
-            let meta_clone = meta.clone();
-            let event = proto_msg::Event {
-                dir: Some(proto_msg::event::Dir::Incoming as i32),
-                dest: None,
-                kind: event.kind,
-                data: event.data,
-                meta: meta_clone
+            // TODO: Notify client about status
+            let response_event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Outcoming as i32),
+                dest: Some(proto_msg::event::Dest::Server as i32),
+                kind: proto_msg::event::Kind::RespondClient as i32,
+                data: vec![status.to_ne_bytes().to_vec()],
+                meta: event.meta
             };
 
-            stream.write(&event::serialize(event)).unwrap();
+            self.main_event_channel_tx.send(response_event).unwrap();
+
+            log::info!("Plugin with specified name doesn't exist");
+        } else {
+            // Getting plugin's stream from the name
+            let child_id = self.plugins_names.get(&plugin_name).unwrap();
+            let fd = self.plugins.get(&child_id).unwrap();
+            let mut stream = self.plugins_streams.get(&fd).unwrap();
+
+            // Sending an event to plugin
+            let meta = event.meta;
+            for event in events_to_plugin {
+                let meta_clone = meta.clone();
+                let event = proto_msg::Event {
+                    dir: Some(proto_msg::event::Dir::Incoming as i32),
+                    dest: None,
+                    kind: event.kind,
+                    data: event.data,
+                    meta: meta_clone
+                };
+
+                stream.write(&event::serialize(event)).unwrap();
+            }
         }
 
         Ok(())
@@ -353,18 +449,18 @@ impl PluginMan {
         let plugin_fd = utils::i32_from_ne_bytes(first_arg).unwrap();
 
         // Getting plugin's stream
-        let stream = self.plugins_streams.get_mut(&plugin_fd).unwrap();
+        if let Some(stream) = self.plugins_streams.get_mut(&plugin_fd) {
+            let event = proto_msg::Event {
+                dir: Some(proto_msg::event::Dir::Incoming as i32),
+                dest: None,
+                kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
+                data: event.data,
+                meta: vec![]
+            };
 
-        let event = proto_msg::Event {
-            dir: Some(proto_msg::event::Dir::Incoming as i32),
-            dest: None,
-            kind: proto_msg::event::Kind::GetFromSharedMemory as i32,
-            data: event.data,
-            meta: vec![]
-        };
-
-        // Sending an event to the plugin
-        stream.write(&event::serialize(event)).unwrap();
+            // Sending an event to the plugin
+            stream.write(&event::serialize(event)).unwrap();
+        }
 
         Ok(())
     }

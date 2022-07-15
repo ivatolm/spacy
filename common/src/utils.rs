@@ -1,5 +1,7 @@
 use std::io::Read;
 
+use crate::event::{self, proto_msg};
+
 fn get_interfaces() -> Vec<pnet::ipnetwork::IpNetwork> {
     let interfaces: Vec<pnet::ipnetwork::IpNetwork> = pnet::datalink::interfaces()
         .into_iter()
@@ -48,19 +50,28 @@ pub fn usize_from_ne_bytes(bytes: &[u8]) -> Result<usize, std::array::TryFromSli
     Ok(usize::from_ne_bytes(bytes[0..bytes.len()].try_into()?))
 }
 
-pub fn read_full_stream(stream: &mut std::net::TcpStream) -> Result<Vec<u8>, std::io::Error> {
+pub fn read_events(stream: &mut std::net::TcpStream) -> Result<Vec<proto_msg::Event>, std::io::Error> {
     let mut message = vec![];
     let mut buf = [0u8; 1024];
+
+    let mut events = vec![];
+
     loop {
-        let bytes_num = stream.read(&mut buf)?;
+        let bytes_num = stream.read(&mut buf).unwrap();
         message.extend(&buf[0..bytes_num]);
 
-        if bytes_num < 1024 {
+        let (new_events, rem) = event::deserialize(&message);
+        events.extend(new_events);
+        message = rem.to_vec();
+
+        if message.len() == 0 {
             break;
         }
 
         buf = [0u8; 1024];
     }
 
-    Ok(message)
+    events.reverse();
+
+    Ok(events)
 }
