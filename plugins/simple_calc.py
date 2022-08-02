@@ -32,6 +32,7 @@ class BasicPlugin(spacy_plugin.SpacyPlugin):
         self.state_data = []
         self.target_result_cnt = 0
         self.results = []
+        self.timer = 0
 
     def update(self):
         try:
@@ -78,9 +79,11 @@ class BasicPlugin(spacy_plugin.SpacyPlugin):
                     if length != self.target_result_cnt:
                         self.shared_memory_get(10001 + length)
                     else:
+                        self.timer = round(time.time() - self.timer, 3)
                         response = self.queue.pop(0)
-                        message = f"Result: {sum(self.results)}"
+                        message = f"Took: {self.timer} seconds | Result: {sum(self.results)}"
                         self.respond_client([bytes(message, encoding="utf-8")], response[1])
+                        self.timer = 0
 
                         self.state = 3
 
@@ -116,6 +119,7 @@ class BasicPlugin(spacy_plugin.SpacyPlugin):
                     self.state = 0
 
                     self.shared_memory_get(10001)
+                    self.timer = time.time()
 
                     return
 
